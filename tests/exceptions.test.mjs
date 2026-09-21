@@ -14,7 +14,7 @@ buildSync({
   format: "esm",
   outfile: ".sites-runtime/seed.mjs",
 });
-const { apply, stock, projectRemaining } = await import(
+const { apply, stock, projectRemaining, visible } = await import(
     "../.sites-runtime/domain.mjs"
   ),
   { seedData } = await import("../.sites-runtime/seed.mjs");
@@ -215,4 +215,11 @@ check("audit contains material before and after changes", () =>
     ),
   ),
 );
+check('scoped audit does not expose collateral changes outside the authorized records', () => {
+  const scopedUser = {id:'R',role:'restaurant',scope:'PAR-1',name:'Restaurant'};
+  const audit = {id:'AUD-SCOPE',kind:'audit',actor:'R',changes:[{id:'PAR-1',after:{name:'own'}},{id:'PAR-2',after:{name:'private'}}]};
+  const visibleState = visible([...s,audit],scopedUser);
+  assert.deepEqual(visibleState.find(r=>r.id===audit.id).changes.map(c=>c.id),['PAR-1']);
+  assert.equal(audit.changes.length,2);
+});
 console.log(checks + " exception checks passed");

@@ -233,7 +233,11 @@ export function visible(s: Row[], u: User): Row[] {
   }
   const ids = new Set(selected.map((r) => r.id));
   return [
-    ...selected,
+    ...selected.map((r) =>
+      r.kind === 'audit' && Array.isArray(r.changes)
+        ? { ...r, changes: r.changes.filter((change: { id: string }) => ids.has(change.id)) }
+        : r,
+    ),
     ...rows(s, "attachment").filter(
       (r) => ids.has(r.targetId) && !ids.has(r.id),
     ),
