@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { buildSync } from "esbuild";
+buildSync({ entryPoints: ["lib/gateway.ts"], bundle: true, platform: "node", format: "esm", outfile: ".sites-runtime/gateway-test.mjs" });
+const { gatewayRequest } = await import("../.sites-runtime/gateway-test.mjs");
+const env = { GATEWAY_SECRET: "test-only-secret-abcdefghijklmnopqrstuvwxyz", PUBLIC_ORIGIN: "https://shellcycle.example" };
+assert.equal((await gatewayRequest(new Request("https://old.example/"), env)).status, 410);
+assert.equal((await gatewayRequest(new Request("https://old.example/api/data", { headers: { "x-shellcycle-gateway": "wrong" } }), env)).status, 410);
+assert.equal((await gatewayRequest(new Request("https://old.example/"), {})).status, 410);
+assert(await gatewayRequest(new Request("http://localhost:5173/"), {}) instanceof Request);
+const req = await gatewayRequest(new Request("https://old.example/api/action?x=1", { method: "POST", headers: { "x-shellcycle-gateway": env.GATEWAY_SECRET, origin: "https://evil.example", cookie: "sc_session=test" }, body: "payload" }), env);
+assert.equal(req.url, "https://shellcycle.example/api/action?x=1");
+assert.equal(req.headers.get("origin"), "https://evil.example");
+assert.equal(req.headers.get("x-shellcycle-gateway"), null);
+assert.equal(req.headers.get("cookie"), "sc_session=test");
+assert.equal(await req.text(), "payload");
+console.log("PASS gateway: direct access denied, fail closed, local preview, URL/body/cookie preserved, secret stripped, Origin preserved");
