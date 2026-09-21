@@ -1,0 +1,24 @@
+import {buildSync} from 'esbuild';import assert from 'node:assert/strict';
+buildSync({entryPoints:['lib/domain.ts'],bundle:true,platform:'node',format:'esm',outfile:'.sites-runtime/domain.mjs'});buildSync({entryPoints:['lib/seed.ts'],bundle:true,platform:'node',format:'esm',outfile:'.sites-runtime/seed.mjs'});
+const {apply,stock,visible}=await import('../.sites-runtime/domain.mjs'),{seedData}=await import('../.sites-runtime/seed.mjs');
+let s=seedData();const admin={id:'A',role:'admin',scope:'all',name:'Admin'},qa={id:'Q',role:'qa',scope:'all',name:'QA'},op={id:'O',role:'operator',scope:'SITE-1',name:'Operator'},restaurant={id:'R',role:'restaurant',scope:'PAR-1',name:'Restaurant'};
+let count=0;function ok(name,fn){fn();count++;console.log('PASS',name)}function command(user,action,data,now){const r=apply(structuredClone(s),user,action,data,now);s=r.state;return r.result}
+ok('seed batch ledger balances',()=>{for(const b of s.filter(x=>x.kind==='batch'))assert(stock(s,b.id).onhand>=stock(s,b.id).held)});
+ok('restaurant data isolated',()=>assert(visible(s,restaurant).every(x=>x.id==='PAR-1'||x.partnerId==='PAR-1'||x.actor==='R')));
+ok('role rejects quality release',()=>assert.throws(()=>command(restaurant,'batch.release',{id:'BAT-001'}),/无权/));
+ok('immature release rejected',()=>assert.throws(()=>command(qa,'batch.release',{id:'BAT-020'}),/期限/));
+ok('oversized reservation rejected',()=>assert.throws(()=>command(admin,'reservation.create',{demandId:'DEM-20',batchId:'BAT-001',weight:999999}),/不足/));
+const p=command(restaurant,'pickup.create',{expected:100,scheduled:'2026-10-01',buckets:3});let t=command(admin,'trip.create',{name:'Test',scheduled:'2026-10-01',driverId:'driver',vehicleId:'VEH-1',pickupIds:[p.id]});command(admin,'pickup.collect',{id:p.id,weight:100});
+ok('invalid weighing rejected',()=>assert.throws(()=>command(op,'receipt.create',{pickupId:p.id,siteId:'SITE-1',gross:80,tare:90,reject:0}),/毛重/));
+const rec=command(op,'receipt.create',{pickupId:p.id,siteId:'SITE-1',gross:110,tare:10,reject:2,reason:'sorting'}),batch=command(op,'batch.create',{name:'test batch',siteId:'SITE-1',zone:'A1'});command(op,'batch.input',{id:batch.id,receiptId:rec.id,weight:98});
+ok('receipt double allocation blocked',()=>assert.throws(()=>command(op,'batch.input',{id:batch.id,receiptId:rec.id,weight:1}),/未分配/));
+command(op,'batch.seal',{id:batch.id},new Date('2024-01-01'));ok('sealed input immutable',()=>assert.throws(()=>command(op,'batch.input',{id:batch.id,receiptId:rec.id,weight:1}),/封批/));
+ok('release needs inspection',()=>assert.throws(()=>command(qa,'batch.release',{id:batch.id}),/检验/));command(qa,'batch.inspect',{id:batch.id,result:'pass',notes:'clean and dry'});command(qa,'batch.release',{id:batch.id});
+const d=command(admin,'demand.create',{projectId:'PRO-1',weight:98,due:'2026-10-01'}),rs=command(admin,'reservation.create',{demandId:d.id,batchId:batch.id,weight:98});command(qa,'batch.quarantine',{id:batch.id,reason:'review'});
+ok('quarantine freezes outbound',()=>assert.throws(()=>command(op,'dispatch.create',{reservationId:rs.id,weight:10,vehicle:'truck'}),/隔离/));command(qa,'batch.inspect',{id:batch.id,result:'pass',notes:'review passed'});command(qa,'batch.release',{id:batch.id});const disp=command(op,'dispatch.create',{reservationId:rs.id,weight:50,vehicle:'truck'});
+ok('partial shipping reconciles stock',()=>assert.deepEqual(stock(s,batch.id),{onhand:48000,held:48000,available:0}));
+ok('over-receipt blocked',()=>assert.throws(()=>command(admin,'dispatch.receive',{id:disp.id,weight:51}),/不得超过/));command(admin,'dispatch.receive',{id:disp.id,weight:49,reason:'transport loss'});command(admin,'deployment.create',{dispatchId:disp.id,weight:40,date:'2026-09-21',location:'test reef'});
+ok('over-deployment blocked',()=>assert.throws(()=>command(admin,'deployment.create',{dispatchId:disp.id,weight:10,date:'2026-09-21',location:'test reef'}),/超过/));command(admin,'reservation.cancel',{id:rs.id,reason:'change'});
+ok('cancel restores unshipped availability',()=>assert.deepEqual(stock(s,batch.id),{onhand:48000,held:0,available:48000}));
+const adj=command(op,'adjustment.create',{batchId:batch.id,type:'loss',weight:1,reason:'inventory count'});ok('self approval blocked',()=>assert.throws(()=>command({...admin,id:'O'},'adjustment.approve',{id:adj.id}),/另一名/));command(qa,'adjustment.approve',{id:adj.id});ok('approved adjustment ledger',()=>assert.equal(stock(s,batch.id).onhand,47000));
+console.log(`${count} domain checks passed; collection-to-deployment workflow complete.`);
