@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="710" viewBox="0 0 1200 710" role="img" aria-labelledby="t d">
+<title id="t">ShellCycle 部署与分层架构</title><desc id="d">浏览器通过 Vercel 访问 Cloudflare Worker，D1 存储关系数据，R2 存储附件，GitHub 保存源码。</desc>
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L9 3L0 6" fill="#087f83"/></marker><style>text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#12313e}.h{font-size:22px;font-weight:700}.p{font-size:17px}.b{fill:white;stroke:#98bac2;stroke-width:2;rx:14}.l{fill:none;stroke:#087f83;stroke-width:3;marker-end:url(#a)}</style></defs>
+<rect width="1200" height="710" fill="#f1f7f8"/><text x="45" y="55" style="font-size:30px;font-weight:700">ShellCycle / 部署与应用分层</text><text x="45" y="88" class="p">Vercel 公开入口 · Cloudflare 业务与存储 · GitHub 源代码交付</text>
+<rect x="45" y="130" width="250" height="110" class="b"/><text x="65" y="170" class="h">浏览器 / 七类角色</text><text x="65" y="204" class="p">React 工作台 / HTTPS</text><text x="65" y="229" class="p">HttpOnly 会话 Cookie</text>
+<rect x="350" y="130" width="300" height="110" class="b"/><text x="370" y="170" class="h">Vercel 网关</text><text x="370" y="204" class="p">页面 / API / 文件流式转发</text><text x="370" y="229" class="p">服务端注入校验密钥</text><path d="M295 185H342" class="l"/>
+<rect x="790" y="130" width="360" height="110" class="b"/><text x="810" y="170" class="h">GitHub 私有仓库</text><text x="810" y="204" class="p">源码 / 迁移 / 测试 / 说明配图</text><text x="810" y="229" class="p">代码交付 ≠ 生产数据库备份</text>
+<rect x="45" y="290" width="605" height="310" rx="16" fill="#dceff0" stroke="#087f83" stroke-width="2"/><text x="65" y="327" class="h">Cloudflare / Sites 托管应用</text>
+<rect x="65" y="350" width="565" height="64" class="b"/><text x="85" y="377" class="p">Worker 入口保护 → Vinext 页面与 API</text><text x="85" y="401" class="p">拒绝直连 / Origin 校验 / 会话与数据范围</text>
+<rect x="65" y="445" width="565" height="64" class="b"/><text x="85" y="472" class="p">领域规则：回收 → 熟化 → 质检 → 分配 → 投放</text><text x="85" y="496" class="p">状态转换 / 整数克核算 / 质量门控 / 异常审批</text>
+<rect x="65" y="540" width="565" height="42" class="b"/><text x="85" y="568" class="p">应用服务：幂等 / 版本守卫 / 事务 / 审计</text><path d="M500 240V282M348 414V437M348 509V532" class="l"/>
+<rect x="790" y="330" width="360" height="100" class="b"/><text x="810" y="368" class="h">D1 / SQLite</text><text x="810" y="400" class="p">实体、流水、审计、账号与会话</text>
+<rect x="790" y="485" width="360" height="100" class="b"/><text x="810" y="523" class="h">R2 / 附件文件</text><text x="810" y="555" class="p">照片与 PDF，经授权 API 读取</text><path d="M650 560H720V380H782M720 535H782" class="l"/>
+<rect x="45" y="640" width="1105" height="45" rx="10" fill="#12313e"/><text x="65" y="669" style="font-size:18px;fill:white">Vercel 不接管数据库；电脑不承担线上服务；源站拒绝无有效密钥的业务访问。</text>
+</svg>
