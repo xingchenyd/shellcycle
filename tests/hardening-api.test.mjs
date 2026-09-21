@@ -84,7 +84,7 @@ assert.equal(
     await post(manager, "deployment.create", {
       dispatchId: dispatch.id,
       weight: 16,
-      date: new Date().toISOString().slice(0, 10),
+      date: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10),
       location: "试验礁",
     })
   ).status,
@@ -97,7 +97,7 @@ assert.equal(
     await post(manager, "deployment.create", {
       dispatchId: dispatch.id,
       weight: 15,
-      date: new Date().toISOString().slice(0, 10),
+      date: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10),
       location: "试验礁",
     })
   ).status,
@@ -113,7 +113,7 @@ await command(qa, "batch.release", { id: "BAT-010" });
 await command(manager, "deployment.create", {
   dispatchId: dispatch.id,
   weight: 15,
-  date: new Date().toISOString().slice(0, 10),
+  date: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10),
   location: "试验礁",
 });
 await command(manager, "demand.close", {

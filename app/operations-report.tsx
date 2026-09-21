@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { Row, rows, qty } from "@/lib/domain";
+import { businessDate } from "@/lib/business-date";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,12 +13,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 export default function OperationsReport({ records: s }: { records: Row[] }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = businessDate();
   const [from, setFrom] = useState(today.slice(0, 7) + "-01"),
     [to, setTo] = useState(today);
   const report = useMemo(() => {
     const dateOf = (r: Row) =>
-      (r.kind === "deployment" ? r.date : r.created || "").slice(0, 10);
+      businessDate(r.kind === "deployment" ? r.date : r.created || "");
     const selected = s.filter((r) => dateOf(r) >= from && dateOf(r) <= to);
     const receipts = rows(selected, "receipt"),
       dispatches = rows(selected, "dispatch"),

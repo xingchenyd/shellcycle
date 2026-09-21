@@ -79,6 +79,8 @@ import {
 } from "@/components/ui/pagination";
 import { Toaster, toast } from "sonner";
 import { fieldNames, actionNames } from "@/lib/presentation";
+import { gridRecords, csvCell } from "@/lib/grid-data";
+import { businessDate } from "@/lib/business-date";
 import BusinessGrid from "./business-grid";
 import RecordDetails from "./record-details";
 import OperationsReport from "./operations-report";
@@ -235,14 +237,18 @@ export default function Workspace({
   );
   const grouped = useMemo(() => {
     const m = new Map<string, Row[]>();
-    for (const r of s) m.set(r.kind, [...(m.get(r.kind) || []), r]);
+    for (const r of s) {
+      const group = m.get(r.kind);
+      if (group) group.push(r);
+      else m.set(r.kind, [r]);
+    }
     return m;
   }, [s]);
   const rs = (kind: string) => grouped.get(kind) || [];
   const name = (id: string) =>
     index.get(id)?.name || userIndex.get(id)?.name || id || "—";
   const can = (...rr: string[]) => u.role === "admin" || rr.includes(u.role);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = businessDate();
   const list = (kind: string, fn?: (r: Row) => boolean) =>
     rs(kind)
       .filter(fn || (() => true))
@@ -270,7 +276,7 @@ export default function Workspace({
   useEffect(() => {
     const p = location.hash.slice(1);
     const batch = new URLSearchParams(location.search).get("batch");
-    if (batch) {
+    if (batch && (u.role === "admin" || rolePages[u.role]?.includes("trace"))) {
       setTraceId(batch);
       setPage("trace");
     }
@@ -351,9 +357,10 @@ export default function Workspace({
       });
       const d: any = await res.json();
       if (!res.ok) throw new Error(d.error);
-      await reload();
       setModal(null);
-      toast.success("已保存，业务数据已更新");
+      toast.success("已保存");
+      try { await reload(); }
+      catch { toast.warning("保存已成功，但列表刷新失败。请刷新数据，不要重复提交。"); }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -875,18 +882,13 @@ export default function Workspace({
     ],
   };
   function csv(kind: string) {
-    const data = rs(kind);
+    const data = gridRecords(s, kind, query, filter, sort, name);
     if (!data.length) {
       toast.info("没有可导出的记录");
       return;
     }
     const keys = [...new Set(data.flatMap(Object.keys))];
-    const cell = (v: any) =>
-      '"' +
-      String(v ?? "")
-        .replace(/^[=+@-]/, "'$&")
-        .replace(/"/g, '""') +
-      '"';
+    const cell = csvCell;
     const content =
       "\ufeff" +
       [
@@ -1360,7 +1362,7 @@ export default function Workspace({
                       <Badge value={i.result} />
                       <p>{i.notes}</p>
                       <small>
-                        {name(i.actor)} · {i.created.slice(0, 10)}
+                        {name(i.actor)} · {businessDate(i.created)}
                       </small>
                     </div>
                   ))}
@@ -1414,8 +1416,9 @@ export default function Workspace({
       const res = await fetch("/api/files", { method: "POST", body: f }),
         j: any = await res.json();
       if (!res.ok) throw new Error(j.error);
-      await reload();
       toast.success("附件已保存");
+      try { await reload(); }
+      catch { toast.warning("附件已保存，但列表刷新失败。请刷新数据，不要重复上传。"); }
     } catch (e: any) {
       toast.error(e.message);
     } finally {

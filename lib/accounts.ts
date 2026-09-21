@@ -29,9 +29,9 @@ export async function changeAccount(
     statements: D1PreparedStatement[] = [];
   let safe: any;
   if (action === "user.create") {
-    assert(roles[x.role] && x.role !== "admin", "请选择业务角色");
+    assert(typeof x.role === "string" && Object.hasOwn(roles, x.role) && x.role !== "admin", "请选择业务角色");
     assert(
-      /^[a-z][a-z0-9_]{2,30}$/.test(x.username),
+      typeof x.username === "string" && /^[a-z][a-z0-9_]{2,30}$/.test(x.username),
       "账号须为 3–31 位英文、数字或下划线",
     );
     assert(
@@ -115,7 +115,7 @@ export async function changeAccount(
     actorName: u.name,
     details: JSON.stringify(safe),
   };
-  await d.batch([
+  try { await d.batch([
     d
       .prepare(
         "INSERT INTO transaction_guard(id,valid) VALUES(?,CASE WHEN (SELECT version FROM business_revision WHERE id=1)=? THEN 1 ELSE NULL END)",
@@ -139,6 +139,17 @@ export async function changeAccount(
       .prepare("INSERT INTO command_fingerprints(id,fingerprint) VALUES(?,?)")
       .bind(key, fingerprint),
     d.prepare("DELETE FROM transaction_guard WHERE id=?").bind(key),
-  ]);
+  ]); } catch (e) {
+    const completed = await d.prepare(
+      "SELECT c.user_id,c.result,f.fingerprint FROM commands c JOIN command_fingerprints f ON f.id=c.id WHERE c.id=?",
+    ).bind(key).first<any>();
+    if (completed) {
+      assert(completed.user_id === u.id && completed.fingerprint === fingerprint, "操作标识冲突");
+      return JSON.parse(completed.result);
+    }
+    if (String(e).includes("transaction_guard")) throw new Error("其他用户刚更新了数据，请刷新后重试");
+    if (String(e).includes("users.username")) throw new Error("登录账号已存在");
+    throw e;
+  }
   return safe;
 }

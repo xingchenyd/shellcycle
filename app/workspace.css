@@ -915,3 +915,50 @@
   color: #b24850;
   background: #fbecee;
 }
+
+/* Shared marine theme, including readable statuses and keyboard states. */
+:root {
+  --background: #f1f7f8;
+  --foreground: #153b48;
+  --primary: #006e73;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #526b75;
+  --border: #d4e4e7;
+  --sidebar: #0c2e3b;
+  --sidebar-accent: #194854;
+  --ring: #007e83;
+}
+body { background: var(--background); color: var(--foreground); }
+.app-main { background: var(--background); }
+.login-story { background: linear-gradient(150deg, #0c2e3b 15%, #125563 100%); }
+.login-form { background: #fbfdfd; }
+.cycle-strip { border-color: #56868e; }
+.topbar { border-top: 3px solid var(--primary); height: auto; min-height: 76px; flex-wrap: wrap; gap: 10px; padding-block: 15px; }
+.welcome, .page-heading { border-bottom: 1px solid var(--border); margin-bottom: 26px; padding-bottom: 24px; }
+.panel, .stat { border-color: var(--border); box-shadow: 0 3px 16px #143d4705; }
+.panel-heading, .table-panel th { background: #f5fafb; }
+.table-panel th, .status, .row-actions button, .project-buttons button { font-size: .875rem; }
+.status-cancelled, .status-closed, .status-withdrawn { color: #53636c; background: #edf1f3; }
+.status-requested, .status-pending { color: #785013; background: #fff1d6; }
+.status-released, .status-received, .status-pass, .status-approved, .status-completed { color: #00634f; background: #dff3ec; }
+.stat > small, .table-panel small, .chart-note, .note, .alerts small, .app-footer { color: #536d79; font-size: .8125rem; }
+.stat-3 > small { color: #c4dce3; }
+.toolbar .search:focus-within { outline: 2px solid var(--ring); outline-offset: 2px; }
+button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+button:disabled { cursor: not-allowed; }
+.row-actions button { min-height: 32px; }
+.table-panel td:first-child { max-width: 220px; white-space: normal; overflow-wrap: anywhere; }
+.form-error { overflow-wrap: anywhere; }
+.section-actions { flex-wrap: wrap; }
+.panel-heading { flex-wrap: wrap; }
+.capacity-stats { grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); }
+@media (max-width: 767px) {
+  .stat > p { font-size: .875rem; }
+  .topbar { min-height: 62px; }
+  .page-heading, .welcome { padding-bottom: 18px; }
+  .stat > strong { font-size: clamp(1.15rem, 5vw, 1.6rem); letter-spacing: -.03em; overflow-wrap: anywhere; }
+  .pager { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

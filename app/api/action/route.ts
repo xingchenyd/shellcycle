@@ -1,14 +1,14 @@
 import { user, mutate, secure, response, fail } from "@/lib/server";
 import { assert } from "@/lib/domain";
 import { changeAccount } from "@/lib/accounts";
+import { readJson } from "@/lib/request";
 export async function POST(req: Request) {
   try {
     secure(req);
     const u = await user(req),
-      b: any = await req.json();
-    assert(JSON.stringify(b).length < 50000, "提交数据过大");
+      b = await readJson(req);
     assert(
-      typeof b.action === "string" && b.data && typeof b.data === "object",
+      typeof b.action === "string" && b.data && typeof b.data === "object" && !Array.isArray(b.data),
       "业务请求格式无效",
     );
     const key = req.headers.get("Idempotency-Key") || "";

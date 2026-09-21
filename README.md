@@ -23,7 +23,7 @@ Vercel 是访问网关，业务执行、数据库及附件仍在 Cloudflare；�
 | `admin` | 运营管理员 | 全局业务、基础设置、账号管理、备份 |
 | `restaurant` | 餐厅联系人 | PAR-1 餐厅的申请及相关记录 |
 | `dispatcher` | 调度员 | 回收线路、车辆和任务安排 |
-| `driver` | 回收司机 | 司机角色可见任务的收取及异常反馈 |
+| `driver` | 回收司机 | 仅分配给当前司机的线路、任务及相关餐厅 |
 | `operator` | 场地操作员 | SITE-1 的称重、投料和出库 |
 | `qa` | 质量检验员 | 检验、放行、隔离及相应审批 |
 | `project` | 项目负责人 | PRO-1 的需求、签收与投放 |
@@ -123,6 +123,8 @@ flowchart TD
 7. 签收不超过发运；投放与退回不可重复消耗相同物料。
 8. 库存调整由另一名有权限的用户审批，不允许自批。
 
+业务日期与日报使用北京时间（Asia/Shanghai / UTC+08），操作时间戳保存为 UTC。重量最多三位 kg 小数，不接受布尔值/数组隐式转换，也不静默舍入更精细的输入。
+
 ## 数据模型与一致性
 
 30 张应用表中有 21 张业务实体表，其余是账号、会话、命令、版本等基础设施。`business_records` 是升级兼容影子数据，主要读模型为关系实体表。
@@ -213,6 +215,7 @@ node tests/domain.test.mjs
 node tests/exceptions.test.mjs
 node tests/relational.test.mjs
 node tests/gateway.test.mjs
+node tests/quality.test.mjs
 ```
 
 运行本地服务后：
@@ -221,6 +224,7 @@ node tests/gateway.test.mjs
 node tests/api.test.mjs
 node tests/hardening-api.test.mjs
 node tests/import-files.test.mjs
+node tests/security-api.test.mjs
 ```
 
 **API 测试会修改本地数据，不要换成生产地址运行。** 默认 localhost:5173，关系库测试使用独立 SQLite。
@@ -272,9 +276,11 @@ shellcycle/
 
 ## 边界与后续改进
 
+最近一轮修正、测试范围和企业上线前未满足条件见 [质量验收记录](docs/quality-review.md)。测试通过不等于不存在缺陷，也不代替企业验收。
+
 - 教学规模分层单体，不承诺企业 SLA、无限并发或永久免费。
 - 当前快照和全局版本适合此规模，大规模应分页并细化事务。
-- 司机演示账号为角色范围，非真实司机个人逐单隔离。
+- 司机按线路的 driverId 隔离；当前演示种子的历史线路均分配给演示司机，不代表所有司机共享所有任务。
 - 未接入地磅、GPS、路线优化、短信、支付或生态监测设备。
 - 审计留痕不是外部不可篡改存证，数据库管理者仍能修改数据。
 - 熟化天数不替代当地法规、专家判断或检测。

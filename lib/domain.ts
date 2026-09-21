@@ -1,3 +1,4 @@
+import { businessDate } from './business-date';
 export type Row = { id: string; kind: string; [key: string]: any };
 export type User = {
   id: string;
@@ -76,12 +77,17 @@ export function assert(ok: any, msg: string): asserts ok {
   if (!ok) throw new Error(msg);
 }
 export function str(v: any, label = "内容", required = true) {
+  assert(v == null || typeof v === "string" || typeof v === "number", `${label}格式无效`);
   const s = String(v ?? "").trim();
   assert(!required || s.length > 0, `请填写${label}`);
   assert(s.length <= 1000, `${label}过长`);
   return s;
 }
 export function grams(v: any, allowZero = false) {
+  assert(
+    typeof v === "number" || (typeof v === "string" && /^\d+(?:\.\d{1,3})?$/.test(v.trim())),
+    "重量须为数字，最多保留三位小数",
+  );
   assert(
     v !== null && v !== undefined && String(v).trim() !== "",
     "请填写重量",
@@ -92,6 +98,7 @@ export function grams(v: any, allowZero = false) {
     "重量必须为有效的正数，最大 1,000,000 kg",
   );
   const g = Math.round(n * 1000);
+  assert(Math.abs(n * 1000 - g) < 0.000001, "重量最多保留三位小数");
   assert(allowZero || g > 0, "最小重量为 0.001 kg");
   return g;
 }
@@ -252,14 +259,14 @@ export function apply(
 ): { result: Row; state: Row[] } {
   const original = new Map(s.map((r) => [r.id, JSON.stringify(r)]));
   const at = now.toISOString(),
-    today = at.slice(0, 10);
+    today = businessDate(now);
   const add = (kind: string, data: any): Row => {
     const r = {
       ...data,
       id:
         kind.slice(0, 3).toUpperCase() +
         "-" +
-        crypto.randomUUID().slice(0, 8).toUpperCase(),
+        crypto.randomUUID().toUpperCase(),
       kind,
       created: at,
     };
@@ -663,6 +670,7 @@ export function apply(
       {
         const site = find(s, str(b.siteId), "site");
         scoped({ id: site.id, kind: "site", siteId: site.id });
+        assert(site.active, "场地已停用");
         assert(site.zones.includes(b.zone), "请选择有效区域");
         r = add("batch", {
           name: str(b.name, "批次名称"),
@@ -677,6 +685,7 @@ export function apply(
       allow("operator");
       r = get("batch");
       assert(r.status === "assembling", "封批后不能继续投料");
+      assert(!["quarantined", "scrapped"].includes(r.quality), "隔离或报废批次不能继续投料");
       {
         const rec = find(s, str(b.receiptId), "receipt"),
           q = grams(b.weight);
@@ -710,15 +719,14 @@ export function apply(
         r.sealedAt = today;
         r.days = rule.days;
         r.ruleVersion = rule.version;
-        r.due = new Date(now.getTime() + rule.days * 86400000)
-          .toISOString()
-          .slice(0, 10);
+        r.due = businessDate(new Date(now.getTime() + rule.days * 86400000));
         break;
       }
     case "batch.inspect":
       allow("qa");
       r = get("batch");
       assert(r.status === "curing", "批次尚未封批");
+      assert(r.quality !== "scrapped", "已报废批次不可重新检验");
       assert(["pass", "fail"].includes(b.result), "检验结果无效");
       add("inspection", {
         batchId: r.id,
@@ -836,6 +844,7 @@ export function apply(
     case "demand.cancel":
       allow("project", "dispatcher");
       r = get("demand");
+      assert(r.status === "open", "需求已结束");
       assert(
         !rows(s, "reservation").some(
           (x) => x.demandId === r.id && x.status === "active",
@@ -945,6 +954,7 @@ export function apply(
           "超过已签收未投放重量（待审批退料也占用额度）",
         );
         assert(date(b.date) <= today, "投放日期不能在未来");
+        assert(!d.receivedAt || date(b.date) >= businessDate(d.receivedAt), "投放日期不能早于签收日期");
         r = add("deployment", {
           dispatchId: d.id,
           batchId: d.batchId,

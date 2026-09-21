@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Row, rows } from "@/lib/domain";
+import { gridRecords } from "@/lib/grid-data";
 export default function BusinessGrid({
   kind,
   title,
@@ -40,22 +41,8 @@ export default function BusinessGrid({
 }) {
   const [pg, setPg] = useState(1);
   useEffect(() => setPg(1), [kind, query, filter, sort]);
-  const rs = (kind: string) => rows(records, kind);
   const setDetail = onDetail;
-  let rr = rs(kind).filter(
-    (r) =>
-      !query ||
-      JSON.stringify(r).toLowerCase().includes(query.toLowerCase()) ||
-      name(r.partnerId).includes(query) ||
-      name(r.projectId).includes(query),
-  );
-  if (filter !== "all" && !compact)
-    rr = rr.filter((r) => r.status === filter || r.quality === filter);
-  rr = [...rr].sort((a, b) =>
-    sort === "id"
-      ? a.id.localeCompare(b.id)
-      : (b.created || "").localeCompare(a.created || ""),
-  );
+  const rr = gridRecords(records, kind, query, compact ? 'all' : filter, sort, name);
   const pages = Math.max(1, Math.ceil(rr.length / 12)),
     current = Math.min(pg, pages);
   const shown = compact

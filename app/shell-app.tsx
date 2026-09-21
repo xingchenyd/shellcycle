@@ -1,8 +1,66 @@
 "use client";
-import {useState,useEffect} from 'react';import {Waves,ArrowRight,ShieldCheck,Loader2} from 'lucide-react';import {Button} from '@/components/ui/button';import {Input} from '@/components/ui/input';import Workspace from './workspace';
-export default function ShellApp(){const [error,setError]=useState(''),[busy,setBusy]=useState(false),[data,setData]=useState<any>(null),[checking,setChecking]=useState(true);
-useEffect(()=>{fetch('/api/data').then(async r=>{if(r.ok)setData(await r.json())}).finally(()=>setChecking(false))},[]);
-async function login(e:React.FormEvent<HTMLFormElement>){e.preventDefault();setBusy(true);setError('');const form=new FormData(e.currentTarget);try{const r=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(form))});const j:any=await r.json();if(!r.ok)throw new Error(j.error);const response=await fetch('/api/data');const d:any=await response.json();if(!response.ok)throw new Error(d.error);setData(d)}catch(e:any){setError(e.message)}finally{setBusy(false)}}
-async function logout(){await fetch('/api/auth',{method:'DELETE',headers:{'Content-Type':'application/json'}});setData(null);history.replaceState(null,'','/')}
-if(data)return <Workspace initial={data} onLogout={logout}/>;
-return <main className="login"><section className="login-story"><div className="brand"><Waves size={34}/> ShellCycle</div><div><p className="eyebrow">BLUEBAY · CIRCULAR OPERATIONS</p><h1>从餐桌出发，<br/>回到海洋。</h1><p>连接每一次回收、每一个熟化批次，<br/>与每一片正在恢复的牡蛎礁。</p><div className="cycle-strip"><span>01 回收</span><span>02 熟化</span><span>03 修复</span></div></div><p className="login-foot">蓝湾生态 · 牡蛎壳循环管理平台</p></section><section className="login-form"><div><p className="eyebrow">工作空间 / SIGN IN</p><h2>登录蓝湾工作台</h2><p className="muted">使用分配给你的业务账号继续</p><form onSubmit={login}><label>账号<Input name="username" required autoComplete="username" placeholder="请输入账号"/></label><label>密码<Input name="password" type="password" required autoComplete="current-password" placeholder="请输入密码"/></label>{error&&<p role="alert" className="form-error">{error}</p>}<Button disabled={busy||checking} type="submit" className="login-submit">{busy?'正在登录…':checking?'检查登录状态…':'登录工作台'} {busy?<Loader2 size={18} className="animate-spin"/>:<ArrowRight size={18}/>}</Button></form><p className="secure"><ShieldCheck size={17}/> 按角色授权 · 全流程留痕</p><p className="demo-note">教学演示环境：机构与业务记录为模拟数据。<br/>可创建并保存新的业务记录。</p></div></section></main>}
+import { useState, useEffect, useRef } from 'react';
+import { Waves, ArrowRight, ShieldCheck, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
+import { requestJson } from '@/lib/client-request';
+import Workspace from './workspace';
+
+export default function ShellApp() {
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const [data, setData] = useState<any>(null), [checking, setChecking] = useState(true);
+  const logoutBusy = useRef(false);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch('/api/data', { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(30000)]) })
+      .then(async r => {
+        if (r.ok) setData(await r.json());
+        else if (r.status !== 401) setError('暂时无法读取工作台，请稍后重试。');
+      })
+      .catch(() => { if (!ctrl.signal.aborted) setError('连接暂不可用，请检查网络后登录。'); })
+      .finally(() => { if (!ctrl.signal.aborted) setChecking(false); });
+    return () => ctrl.abort();
+  }, []);
+  async function login(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setError('');
+    const form = new FormData(e.currentTarget);
+    try {
+      await requestJson('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(form)) });
+      setData(await requestJson('/api/data'));
+    } catch (e) { setError(e instanceof Error ? e.message : '登录失败，请重试。'); }
+    finally { setBusy(false); }
+  }
+  async function logout() {
+    if (logoutBusy.current) return;
+    logoutBusy.current = true;
+    try {
+      await requestJson('/api/auth', { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
+      setData(null); history.replaceState(null, '', '/');
+    } catch (e) { toast.error(e instanceof Error ? e.message : '退出失败，请重试。'); }
+    finally { logoutBusy.current = false; }
+  }
+  if (data) return <Workspace initial={data} onLogout={logout} />;
+  return <main className="login">
+    <section className="login-story">
+      <div className="brand"><Waves size={34} aria-hidden="true" /> ShellCycle</div>
+      <div><p className="eyebrow">BLUEBAY · CIRCULAR OPERATIONS</p><h1>从餐桌出发，<br />回到海洋。</h1>
+        <p>连接每一次回收、每一个熟化批次，<br />与每一片正在恢复的牡蛎礁。</p>
+        <div className="cycle-strip"><span>01 回收</span><span>02 熟化</span><span>03 修复</span></div>
+      </div><p className="login-foot">蓝湾生态 · 牡蛎壳循环管理平台</p>
+    </section>
+    <section className="login-form"><div>
+      <p className="eyebrow">工作空间 / SIGN IN</p><h2>登录蓝湾工作台</h2><p className="muted">使用分配给你的业务账号继续</p>
+      <form onSubmit={login} aria-busy={busy || checking}>
+        <label>账号<Input name="username" required maxLength={31} autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="请输入账号" /></label>
+        <label>密码<Input name="password" type="password" required maxLength={128} autoComplete="current-password" placeholder="请输入密码" /></label>
+        {error && <p role="alert" className="form-error">{error}</p>}
+        <Button disabled={busy || checking} type="submit" className="login-submit">{busy ? '正在登录…' : checking ? '检查登录状态…' : '登录工作台'} {busy ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : <ArrowRight size={18} aria-hidden="true" />}</Button>
+      </form>
+      <p className="secure"><ShieldCheck size={17} aria-hidden="true" /> 按角色授权 · 全流程留痕</p>
+      <p className="demo-note">教学演示环境：机构与业务记录为模拟数据。<br />可创建并保存新的业务记录。</p>
+    </div></section>
+  </main>;
+}

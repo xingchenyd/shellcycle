@@ -2,6 +2,7 @@ import { relationalWrites } from "@/lib/relational";
 import { env } from "cloudflare:workers";
 import { user, snapshot, db, response, fail } from "@/lib/server";
 import { visible, assert } from "@/lib/domain";
+import { readBody } from "@/lib/request";
 export async function POST(req: Request) {
   try {
     const u = await user(req);
@@ -13,7 +14,8 @@ export async function POST(req: Request) {
       Number(req.headers.get("content-length") || 0) < 5500000,
       "文件最多 5 MB",
     );
-    const f = await req.formData(),
+    const bytesBody = await readBody(req, 5500000);
+    const f = await new Response(bytesBody, { headers: { "Content-Type": req.headers.get("content-type") || "" } }).formData(),
       file = f.get("file") as File,
       target = String(f.get("targetId"));
     assert(
