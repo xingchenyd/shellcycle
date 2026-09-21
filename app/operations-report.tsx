@@ -96,26 +96,33 @@ export default function OperationsReport({ records: s }: { records: Row[] }) {
           导出当前区间
         </Button>
       </div>
-      <div className="report-filters">
+      <form className="report-filters" onSubmit={(e) => {
+        e.preventDefault();
+        const range = new FormData(e.currentTarget);
+        setFrom(String(range.get('from')));
+        setTo(String(range.get('to')));
+      }}>
         <label>
           开始日期
           <Input
             type="date"
-            value={from}
-            max={to}
-            onChange={(e) => setFrom(e.target.value)}
+            name="from"
+            required
+            defaultValue={from}
           />
         </label>
         <label>
           结束日期
           <Input
             type="date"
-            value={to}
-            min={from}
-            onChange={(e) => setTo(e.target.value)}
+            name="to"
+            required
+            defaultValue={to}
           />
         </label>
-      </div>
+        <Button type="submit" className="self-end">应用区间</Button>
+      </form>
+      <p className="note" role="status">已应用区间：{from} 至 {to}</p>
       {from > to ? (
         <p className="form-error">开始日期不能晚于结束日期。</p>
       ) : (
