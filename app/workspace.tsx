@@ -1,83 +1,1964 @@
 "use client";
-import {useState,useEffect,useMemo} from 'react';
-import {Waves,LayoutDashboard,Truck,PackageCheck,Layers3,Warehouse,Shell,Route,Search,Plus,RefreshCw,LogOut,ArrowUpRight,Download,Users,SlidersHorizontal,History,Link2,FileText,MapPin,Calendar,ChevronRight,Upload,Menu} from 'lucide-react';
-import {Button} from '@/components/ui/button';import {Input} from '@/components/ui/input';
-import {SidebarProvider,Sidebar,SidebarHeader,SidebarContent,SidebarFooter,SidebarMenu,SidebarMenuItem,SidebarMenuButton,SidebarTrigger} from '@/components/ui/sidebar';
-import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from '@/components/ui/table';
-import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
-import {Sheet,SheetContent,SheetHeader,SheetTitle,SheetDescription} from '@/components/ui/sheet';
-import {Select,SelectTrigger,SelectValue,SelectContent,SelectItem} from '@/components/ui/select';
-import {Checkbox} from '@/components/ui/checkbox';import {Progress} from '@/components/ui/progress';
-import {Pagination,PaginationContent,PaginationItem,PaginationNext,PaginationPrevious} from '@/components/ui/pagination';
-import {Toaster,toast} from 'sonner';
-import {fieldNames,actionNames} from '@/lib/presentation';
-import ImportPickups from './import-pickups';
-import {Row,User,rows,qty,stock,roles,labels} from '@/lib/domain';
-type Field={key:string;label:string;type?:string;options?:{value:string,label:string}[];value?:any;optional?:boolean};
-type Modal={action:string;title:string;fields:Field[];data:any;key:string};
-const nav=[['overview','工作总览',LayoutDashboard],['pickup','回收申请',Truck],['trip','调度线路',Route],['receipt','称重入库',PackageCheck],['batch','熟化与质检',Layers3],['inventory','库存与分配',Warehouse],['project','修复项目',Shell],['dispatch','发运与投放',ArrowUpRight],['trace','全链路溯源',Link2],['partner','合作餐厅',Users],['report','运营报表',FileText],['audit','操作日志',History],['settings','基础设置',SlidersHorizontal]] as const;
-const descriptions:Record<string,string>={overview:'每一次回收，都有迹可循。',pickup:'从餐厅提交到上门收取，跟进每一笔回收。',trip:'按车辆、司机与日期安排回收线路。',receipt:'记录真实称重，分拣拒收物，保留重量差异。',batch:'封批开始计时，检验合格后人工放行。',inventory:'查看可用库存，分配项目需求，跟踪每笔出入库。',project:'从物料需求到现场投放，连接牡蛎礁修复。',dispatch:'分批发运、差异签收与现场投放记录。',trace:'选择批次，追溯来源餐厅和物料去向。',partner:'管理参与回收的餐厅及联系方式。',report:'所有指标均由已保存的业务记录计算。',audit:'关键业务操作的时间、操作者和变更记录。',settings:'管理场地、车辆、账号及熟化规则。'};
-const rolePages:Record<string,string[]>={restaurant:['overview','pickup','partner'],driver:['overview','trip','pickup'],operator:['overview','pickup','receipt','batch','inventory','dispatch','trace'],qa:['overview','batch','inventory','trace','audit'],project:['overview','project','dispatch','report'],dispatcher:['overview','pickup','trip','receipt','batch','inventory','project','dispatch','trace','partner','report','audit']};
-function Pick({value,onChange,options,placeholder='请选择'}:{value:string,onChange:(v:string)=>void,options:{value:string,label:string}[],placeholder?:string}){return <Select value={value||undefined} onValueChange={onChange}><SelectTrigger className="w-full"><SelectValue placeholder={placeholder}/></SelectTrigger><SelectContent>{options.map(o=><SelectItem value={o.value} key={o.value}>{o.label}</SelectItem>)}</SelectContent></Select>}
-function Badge({value}:{value:string}){return <span className={'status status-'+value}>{labels[value]||({unreleased:'待放行',loss:'损耗',scrap:'报废',return:'退回',all:'全部'} as any)[value]||value}</span>}
-export default function Workspace({initial,onLogout}:{initial:any,onLogout:()=>void}){
- const [data,setData]=useState(initial),[page,setPage]=useState('overview'),[query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[pg,setPg]=useState(1),[sort,setSort]=useState('new'),[modal,setModal]=useState<Modal|null>(null),[form,setForm]=useState<any>({}),[busy,setBusy]=useState(false),[error,setError]=useState(''),[detail,setDetail]=useState<Row|null>(null),[traceId,setTraceId]=useState(''),[importText,setImportText]=useState(''),[importPreview,setImportPreview]=useState<any[]|null>(null);
- const s:Row[]=data.records,u:User=data.user;const rs=(kind:string)=>rows(s,kind);const name=(id:string)=>s.find(x=>x.id===id)?.name||data.users.find((x:any)=>x.id===id)?.name||id||'—';const can=(...rr:string[])=>u.role==='admin'||rr.includes(u.role);const today=new Date().toISOString().slice(0,10);const list=(kind:string,fn?:(r:Row)=>boolean)=>rs(kind).filter(fn||(()=>true)).map(r=>({value:r.id,label:`${r.name||r.id}${r.partnerId?' · '+name(r.partnerId):''}`}));
- const go=(p:string)=>{setPage(p);setQuery('');setFilter('all');setPg(1);history.replaceState(null,'','#'+p)};
- async function reload(){const r=await fetch('/api/data');const d:any=await r.json();if(!r.ok){if(r.status===401)onLogout();throw new Error(d.error)}setData(d);return d}
- useEffect(()=>{const p=location.hash.slice(1);const batch=new URLSearchParams(location.search).get('batch');if(batch){setTraceId(batch);setPage('trace')}if(nav.some(x=>x[0]===p)&&(u.role==='admin'||rolePages[u.role]?.includes(p)))setPage(p)},[]);
- useEffect(()=>{const mc=(document as any).modelContext;if(!mc?.registerTool)return;const ctrl=new AbortController();Promise.resolve(mc.registerTool({name:'navigate_shellcycle',description:'切换至指定业务页面，不创建或修改记录',inputSchema:{type:'object',properties:{page:{type:'string',enum:nav.map(n=>n[0])}},required:['page'],additionalProperties:false},annotations:{readOnlyHint:true},execute:async(x:any)=>{if(!nav.some(n=>n[0]===x.page)||!(u.role==='admin'||rolePages[u.role]?.includes(x.page)))throw new Error('无权访问该页面');go(x.page);return {page:x.page}}},{signal:ctrl.signal})).catch(()=>{});return ()=>ctrl.abort()},[u.role]);
- const field=(key:string,label:string,type='text',options?:any[],optional=false):Field=>({key,label,type,options,optional});
- const weight=()=>field('weight','重量（kg）','number');const reason=()=>field('reason','原因 / 依据','textarea');
- function open(action:string,title:string,fields:Field[]=[],base:any={}){const values={...base};fields.forEach(f=>{values[f.key]??=f.value??(f.type==='multi'?[]:'')});setModal({action,title,fields,data:base,key:crypto.randomUUID()});setForm(values);setError('')}
- async function submit(){if(!modal)return;setBusy(true);setError('');try{const res=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':modal.key},body:JSON.stringify({action:modal.action,data:form})});const d:any=await res.json();if(!res.ok)throw new Error(d.error);await reload();setModal(null);toast.success('已保存，业务数据已更新')}catch(e:any){setError(e.message)}finally{setBusy(false)}}
- function create(kind:string){switch(kind){
- case 'pickup':open('pickup.create','新建回收申请',[...(u.role==='restaurant'?[]:[field('partnerId','合作餐厅','select',list('partner',r=>r.active))]),field('expected','预计净重（kg）','number'),field('buckets','回收桶数','number'),field('scheduled','期望回收日期','date'),field('notes','装货说明','textarea',undefined,true)],{scheduled:today,buckets:4});break;
- case 'trip':open('trip.create','安排回收线路',[field('name','线路名称'),field('scheduled','回收日期','date'),field('vehicleId','车辆','select',list('vehicle')),field('driverId','司机','select',data.users.filter((x:any)=>x.role==='driver'&&x.active).map((x:any)=>({value:x.id,label:x.name}))),field('pickupIds','待调度申请（按选择顺序停靠）','multi',list('pickup',r=>r.status==='requested'))],{scheduled:today});break;
- case 'receipt':open('receipt.create','称重入库',[field('pickupId','已收取申请','select',list('pickup',r=>r.status==='collected')),field('siteId','接收场地','select',list('site',r=>u.role!=='operator'||r.id===u.scope)),field('gross','毛重（kg）','number'),field('tare','皮重（kg）','number'),field('reject','拒收重量（kg）','number'),field('reason','拒收原因 / 说明','textarea',undefined,true)],{tare:0,reject:0,siteId:u.role==='operator'?u.scope:''});break;
- case 'batch':open('batch.create','建立熟化批次',[field('name','批次名称'),field('siteId','场地','select',list('site',r=>u.role!=='operator'||r.id===u.scope)),field('zone','堆放区','select',Array.from(new Set(rs('site').flatMap(x=>x.zones))).map(x=>({value:x,label:x})))],{siteId:u.role==='operator'?u.scope:''});break;
- case 'project':open('project.create','新建修复项目',[field('name','项目名称'),field('location','修复地点'),field('target','目标用壳量（kg）','number'),field('manager','负责人')]);break;
- case 'partner':open('partner.create','添加合作餐厅',[field('name','餐厅名称'),field('contact','联系人'),field('phone','电话'),field('address','地址')]);break;
- case 'demand':open('demand.create','提交物料需求',[...(u.role==='project'?[]:[field('projectId','修复项目','select',list('project',r=>r.status==='open'))]),weight(),field('due','需求日期','date'),field('notes','用途说明','textarea',undefined,true)],{due:today});break;
- case 'reservation':open('reservation.create','分配可用库存',[field('demandId','物料需求','select',list('demand',r=>r.status==='open')),field('batchId','放行批次','select',list('batch',r=>stock(s,r.id).available>0)),weight()]);break;
- case 'adjustment':open('adjustment.create','申请库存调整',[field('batchId','批次','select',list('batch')),field('type','调整类型','select',[{value:'loss',label:'盘点损耗（减库存）'},{value:'scrap',label:'报废（减库存）'},{value:'return',label:'退回入库（加库存）'}]),weight(),reason()]);break;
- }}
- function rowActions(r:Row){const a:{label:string;run:()=>void}[]=[];const act=(label:string,action:string,fields:Field[]=[],extra:any={})=>a.push({label,run:()=>open(action,label,fields,{id:r.id,...extra})});
- if(r.kind==='pickup'){if(can('restaurant','dispatcher')&&['requested','assigned'].includes(r.status))act('取消','pickup.cancel',[reason()]);if(can('driver')&&r.status==='assigned')act('确认收取','pickup.collect',[weight(),field('notes','现场说明','textarea',undefined,true)]);if(can('operator')&&r.status==='collected')a.push({label:'入库',run:()=>{create('receipt');setForm((f:any)=>({...f,pickupId:r.id}))}})}
- if(r.kind==='batch'){if(can('operator')&&r.status==='assembling'){act('添加投料','batch.input',[field('receiptId','入库单','select',list('receipt',x=>x.siteId===r.siteId&&x.accepted>rs('input').filter(y=>y.receiptId===x.id).reduce((a,y)=>a+y.qty,0))),weight()]);act('封批','batch.seal')}if(can('qa')&&r.status==='curing'){act('检验','batch.inspect',[field('result','检验结果','select',[{value:'pass',label:'合格'},{value:'fail',label:'不合格，自动隔离'}]),field('notes','抽检情况及结论','textarea')]);if(r.quality!=='released')act('放行','batch.release');if(r.quality!=='quarantined')act('隔离','batch.quarantine',[reason()])}a.push({label:'溯源',run:()=>{go('trace');setTraceId(r.id)}})}
- if(r.kind==='reservation'&&r.status==='active'){if(can('dispatcher','operator'))act('发运','dispatch.create',[weight(),field('vehicle','运输车辆')],{reservationId:r.id});if(can('dispatcher'))act('取消预留','reservation.cancel',[reason()])}
- if(r.kind==='dispatch'){if(can('project')&&r.status==='shipped')act('签收','dispatch.receive',[weight(),field('reason','差异说明','textarea',undefined,true)],{weight:r.qty/1000});if(can('project')&&r.status==='received')act('记录投放','deployment.create',[weight(),field('date','投放日期','date'),field('location','投放点 / 坐标'),field('notes','现场记录','textarea',undefined,true)],{dispatchId:r.id,date:today})}
- if(r.kind==='project'&&can('project')&&r.status==='open'){a.push({label:'物料需求',run:()=>{create('demand');setForm((f:any)=>({...f,projectId:r.id}))}});act('结项','project.close')}
- if(r.kind==='adjustment'&&r.status==='pending'&&can('qa'))act('复核批准','adjustment.approve');if(r.kind==='partner'&&can('dispatcher'))act(r.active?'停用':'启用','partner.toggle');if(r.kind==='demand'&&r.status==='open'&&can('project','dispatcher'))act('取消需求','demand.cancel');return a;
- }
- const columns:Record<string,[string,(r:Row)=>any][]>= {
- pickup:[['回收编号',r=>r.id],['餐厅',r=>name(r.partnerId)],['回收日期',r=>r.scheduled],['预计 / 收取 kg',r=>`${qty(r.expected)} / ${r.collectedWeight?qty(r.collectedWeight):'—'}`],['状态',r=><Badge value={r.status}/>]],
- trip:[['线路',r=>r.name],['司机 / 车辆',r=>`${name(r.driverId)} / ${name(r.vehicleId)}`],['日期',r=>r.scheduled],['收取进度',r=>{const p=rs('pickup').filter(p=>p.tripId===r.id);return `${p.filter(x=>['collected','received','rejected'].includes(x.status)).length} / ${p.filter(x=>x.status!=='cancelled').length} 站`}]],
- receipt:[['入库单号',r=>r.id],['来源餐厅',r=>name(r.partnerId)],['接收场地',r=>name(r.siteId)],['毛重 / 皮重 kg',r=>`${qty(r.gross)} / ${qty(r.tare)}`],['接收 / 拒收 kg',r=>`${qty(r.accepted)} / ${qty(r.reject)}`]],
- batch:[['批次',r=><><strong>{r.name}</strong><small>{r.id}</small></>],['场地 / 区域',r=>`${name(r.siteId)} · ${r.zone}`],['熟化到期',r=>r.due||'尚未封批'],['实物库存 kg',r=>qty(stock(s,r.id).onhand)],['状态',r=><Badge value={r.quality==='unreleased'?r.status:r.quality}/>]],
- demand:[['需求单',r=>r.id],['项目',r=>name(r.projectId)],['需求 kg',r=>qty(r.qty)],['需用日期',r=>r.due],['状态',r=><Badge value={r.status}/>]],
- reservation:[['预留单',r=>r.id],['项目 / 批次',r=><>{name(r.projectId)}<small>{r.batchId}</small></>],['预留 / 已发运 kg',r=>`${qty(r.qty)} / ${qty(r.shipped)}`],['状态',r=><Badge value={r.status}/>]],
- dispatch:[['发运单',r=>r.id],['修复项目',r=>name(r.projectId)],['批次',r=>r.batchId],['发运 / 签收 kg',r=>`${qty(r.qty)} / ${r.received==null?'—':qty(r.received)}`],['状态',r=><Badge value={r.status}/>]],
- deployment:[['投放记录',r=>r.id],['项目',r=>name(r.projectId)],['投放点',r=>r.location],['日期',r=>r.date],['投放 kg',r=>qty(r.qty)]],
- partner:[['合作餐厅',r=>r.name],['联系人',r=>r.contact],['电话',r=>r.phone],['地址',r=>r.address],['状态',r=>r.active?'合作中':'已停用']],
- ledger:[['流水编号',r=>r.id],['批次',r=>r.batchId],['变动 kg',r=><span className={r.delta>0?'positive':'negative'}>{r.delta>0?'+':''}{qty(r.delta)}</span>],['原因',r=>r.reason],['关联记录',r=>r.ref]],
- adjustment:[['调整单',r=>r.id],['批次',r=>r.batchId],['类型',r=><Badge value={r.type}/>],['重量 kg',r=>qty(r.qty)],['状态',r=><Badge value={r.status}/>]],
- audit:[['时间',r=>r.created?.replace('T',' ').slice(0,19)],['操作人',r=>r.actorName],['操作',r=>actionNames[r.action]||r.action],['业务记录',r=>r.target]],
- site:[['场地',r=>r.name],['地址',r=>r.address],['区域',r=>r.zones.join(' / ')],['容量 kg',r=>qty(r.capacity)]],vehicle:[['车辆',r=>r.name],['载重 kg',r=>qty(r.capacity)]]};
- function csv(kind:string){const data=rs(kind);if(!data.length){toast.info('没有可导出的记录');return}const keys=[...new Set(data.flatMap(Object.keys))];const cell=(v:any)=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';const content='\ufeff'+[keys.join(','),...data.map(r=>keys.map(k=>cell(typeof r[k]==='object'?JSON.stringify(r[k]):r[k])).join(','))].join('\r\n');const url=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`ShellCycle-${kind}-${today}.csv`;a.click();URL.revokeObjectURL(url)}
- function Grid({kind,title,compact=false}:{kind:string,title?:string,compact?:boolean}){let rr=rs(kind).filter(r=>!query||JSON.stringify(r).toLowerCase().includes(query.toLowerCase())||name(r.partnerId).includes(query)||name(r.projectId).includes(query));if(filter!=='all'&&!compact)rr=rr.filter(r=>r.status===filter||r.quality===filter);rr=[...rr].sort((a,b)=>sort==='id'?a.id.localeCompare(b.id):(b.created||'').localeCompare(a.created||''));const pages=Math.max(1,Math.ceil(rr.length/12)),current=Math.min(pg,pages);const shown=compact?rr.slice(0,6):rr.slice((current-1)*12,current*12);return <section className="panel table-panel">{title&&<div className="panel-heading"><h3>{title} <span className="count">{rr.length}</span></h3><Button variant="ghost" size="sm" onClick={()=>csv(kind)}><Download size={15}/> 导出</Button></div>}<Table><TableHeader><TableRow>{columns[kind]?.map(c=><TableHead key={c[0]}>{c[0]}</TableHead>)}<TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{shown.map(r=><TableRow key={r.id}>{columns[kind]?.map(c=><TableCell key={c[0]}>{c[1](r)}</TableCell>)}<TableCell><div className="row-actions"><button onClick={()=>setDetail(r)}>详情</button>{rowActions(r).map(a=><button key={a.label} onClick={a.run}>{a.label}</button>)}</div></TableCell></TableRow>)}{!shown.length&&<TableRow><TableCell colSpan={8}><div className="empty"><Shell size={28}/><p>暂无符合条件的记录</p><span>调整筛选条件，或创建新的业务记录。</span></div></TableCell></TableRow>}</TableBody></Table>{!compact&&<div className="pager"><span>共 {rr.length} 条 · 第 {current} / {pages} 页</span><Pagination><PaginationContent><PaginationItem><PaginationPrevious onClick={()=>setPg(Math.max(1,current-1))}>上一页</PaginationPrevious></PaginationItem><PaginationItem><PaginationNext onClick={()=>setPg(Math.min(pages,current+1))}>下一页</PaginationNext></PaginationItem></PaginationContent></Pagination></div>}</section>}
- const totals={received:rs('receipt').reduce((a,r)=>a+r.accepted,0),deployed:rs('deployment').reduce((a,r)=>a+r.qty,0),available:rs('batch').reduce((a,r)=>a+stock(s,r.id).available,0),curing:rs('batch').filter(r=>r.quality==='unreleased').reduce((a,r)=>a+stock(s,r.id).onhand,0)};
- const alerts=[...rs('batch').filter(r=>r.quality==='quarantined').map(r=>({title:`${r.name} 已隔离`,sub:'未发运预留已冻结，请安排复检',page:'batch'})),...rs('batch').filter(r=>r.quality==='unreleased'&&r.due<=today).map(r=>({title:`${r.name} 熟化到期`,sub:'检验合格后可人工放行',page:'batch'})),...rs('pickup').filter(r=>['requested','assigned'].includes(r.status)&&r.scheduled<today).slice(0,3).map(r=>({title:`${name(r.partnerId)} 回收待处理`,sub:`原定 ${r.scheduled}`,page:'pickup'})),...rs('dispatch').filter(r=>r.status==='shipped').slice(0,3).map(r=>({title:`${r.id} 等待签收`,sub:name(r.projectId),page:'dispatch'}))];
- const pageNav=nav.filter(n=>u.role==='admin'||rolePages[u.role]?.includes(n[0]));
- function Stats(){return <div className="stats">{(u.role==='driver'?[['待收取任务',String(rs('pickup').filter(x=>x.status==='assigned').length),'单','仅显示分配给你的任务'],['我的回收线路',String(rs('trip').filter(x=>x.status!=='completed').length),'条','按线路和日期安排停靠'],['已收取任务',String(rs('pickup').filter(x=>['collected','received','rejected'].includes(x.status)).length),'单','已确认现场收取'],['累计收取净重',qty(rs('pickup').reduce((a,x)=>a+(x.collectedWeight||0),0)),'kg','按你的现场收取记录计算']]:u.role==='restaurant'?[['我的回收申请',String(rs('pickup').length),'单','当前餐厅的全部申请'],['待上门收取',String(rs('pickup').filter(x=>['requested','assigned'].includes(x.status)).length),'单','已提交或已安排车辆'],['累计现场收取',qty(rs('pickup').reduce((a,x)=>a+(x.collectedWeight||0),0)),'kg','以司机现场记录为准'],['累计有效回收',qty(totals.received),'kg','扣除皮重与拒收杂物']]:u.role==='project'?[['物料需求',qty(rs('demand').filter(x=>x.status!=='cancelled').reduce((a,x)=>a+x.qty,0)),'kg','当前项目的有效需求'],['已安排发运',qty(rs('dispatch').reduce((a,x)=>a+x.qty,0)),'kg','累计发运到本项目'],['已完成签收',qty(rs('dispatch').reduce((a,x)=>a+(x.received||0),0)),'kg','按现场签收净重计算'],['已完成现场投放',qty(totals.deployed),'kg','以现场投放记录为准']]:[['累计接收入库',qty(totals.received),'kg','接收净重，已扣除拒收'],['可分配库存',qty(totals.available),'kg','已放行 · 扣除有效预留'],['正在熟化',qty(totals.curing),'kg','等待到期与质量检验'],['已完成现场投放',qty(totals.deployed),'kg','以现场投放记录为准']]).map((m,i)=><section className={'stat stat-'+i} key={m[0]}><p>{m[0]}<span>0{i+1}</span></p><strong>{m[1]} <small>{m[2]}</small></strong><small>{m[3]}</small></section>)}</div>}
- function Overview(){return <><div className="welcome"><div><p className="eyebrow">BLUEBAY OPERATIONS</p><h2>{u.name}，欢迎回来</h2><p>让每一份牡蛎壳，找到回到海洋的路径。</p></div><div className="welcome-date"><Calendar size={20}/>{today}<small>蓝湾生态 / 教学演示组织</small></div></div><Stats/><div className="overview-grid"><section className="panel"><div className="panel-heading"><h3>{['driver','restaurant'].includes(u.role)?'回收进展':u.role==='project'?'项目物料进展':'循环进展'}</h3><span className="muted">当前授权范围</span></div><div className="flow-bars">{(['driver','restaurant'].includes(u.role)?[['预计回收',rs('pickup').filter(x=>x.status!=='cancelled').reduce((a,r)=>a+r.expected,0)],['已收取',rs('pickup').reduce((a,r)=>a+(r.collectedWeight||0),0)],['已接收入库',totals.received]]:u.role==='project'?[['物料需求',rs('demand').filter(x=>x.status!=='cancelled').reduce((a,r)=>a+r.qty,0)],['已发运',rs('dispatch').reduce((a,r)=>a+r.qty,0)],['已现场投放',totals.deployed]]:[['已接收入库',totals.received],['已分配发运',rs('dispatch').reduce((a,r)=>a+r.qty,0)],['完成现场投放',totals.deployed]]).map(([label,v],i)=><div key={String(label)}><div><span><b>0{i+1}</b> {label}</span><strong>{qty(Number(v))}</strong></div><Progress value={Math.min(100,Number(v)/Math.max(1,totals.received,rs('pickup').reduce((a,r)=>a+r.expected,0),rs('demand').reduce((a,r)=>a+r.qty,0))*100)}/></div>)}</div><p className="chart-note">不同环节的累计量用于跟踪物料进展，不作为碳减排或生态效果估算。</p></section><section className="panel"><div className="panel-heading"><h3>待办提醒 <span className="count">{alerts.length}</span></h3></div><div className="alerts">{alerts.slice(0,4).map((a,i)=><button key={i} onClick={()=>go(a.page)}><span className="alert-number">{String(i+1).padStart(2,'0')}</span><span><strong>{a.title}</strong><small>{a.sub}</small></span><ChevronRight size={17}/></button>)}{!alerts.length&&<p className="muted">当前没有待处理提醒。</p>}</div></section></div>{can('restaurant','driver','dispatcher')?<Grid kind="pickup" title="近期回收申请" compact/>:<Grid kind={u.role==='project'?'dispatch':'batch'} title={u.role==='project'?'项目物料':'熟化批次'} compact/>}</>}
- function Projects(){return <div className="project-grid">{rs('project').map(p=>{const used=rs('deployment').filter(d=>d.projectId===p.id).reduce((a,d)=>a+d.qty,0);return <section className="panel project-card" key={p.id}><div className="project-top"><span className="project-icon"><Shell size={25}/></span><Badge value={p.status}/></div><h3>{p.name}</h3><p><MapPin size={15}/>{p.location}</p><div className="project-progress"><strong>{qty(used)} <small>/ {qty(p.target)} kg</small></strong><span>{Math.round(used/p.target*100)}%</span></div><Progress value={Math.min(100,used/p.target*100)}/><p className="muted">负责人 {p.manager} · {p.id}</p><div className="project-buttons"><Button variant="outline" onClick={()=>setDetail(p)}>查看项目</Button>{rowActions(p).map(a=><Button key={a.label} variant="ghost" onClick={a.run}>{a.label}</Button>)}</div></section>})}</div>}
- function Trace(){const b=s.find(x=>x.id===traceId&&x.kind==='batch');const ins=b?rs('input').filter(x=>x.batchId===b.id):[];return <><section className="panel trace-search"><div><h3>追踪一批牡蛎壳的旅程</h3><p className="muted">从餐厅来源，到熟化检验，再到项目现场。</p></div><Pick value={traceId} onChange={setTraceId} options={list('batch')} placeholder="选择需要追溯的批次"/></section>{b&&<><div className="trace-summary"><strong>{b.name}</strong><a href={'/?batch='+encodeURIComponent(b.id)+'#trace'} title="可收藏或分享的批次溯源链接">{b.id} ↗</a><Badge value={b.quality}/><span>封批 {b.sealedAt||'—'} · 到期 {b.due||'—'}</span></div><div className="trace-columns"><section className="panel"><h3>01 · 回收来源</h3>{ins.map(i=>{const rec=s.find(x=>x.id===i.receiptId);return <button className="trace-item" key={i.id} onClick={()=>rec&&setDetail(rec)}><strong>{rec?name(rec.partnerId):'来源记录'}</strong><small>{i.receiptId}</small><span>{qty(i.qty)} kg</span></button>})}</section><section className="panel"><h3>02 · 熟化与检验</h3><div className="trace-item"><strong>{name(b.siteId)} / {b.zone}</strong><small>规则版本 {b.ruleVersion||'—'} · {b.days||'—'} 天</small></div>{rs('inspection').filter(i=>i.batchId===b.id).map(i=><div className="trace-item" key={i.id}><Badge value={i.result}/><p>{i.notes}</p><small>{name(i.actor)} · {i.created.slice(0,10)}</small></div>)}{b.reason&&<p className="warning">{b.reason}</p>}</section><section className="panel"><h3>03 · 项目去向</h3>{rs('dispatch').filter(d=>d.batchId===b.id).map(d=><button className="trace-item" key={d.id} onClick={()=>setDetail(d)}><strong>{name(d.projectId)}</strong><small>{d.id} · {labels[d.status]}</small><span>发运 {qty(d.qty)} kg</span><small>已投放 {qty(rs('deployment').filter(x=>x.dispatchId===d.id).reduce((a,x)=>a+x.qty,0))} kg</small></button>)}{!rs('dispatch').some(d=>d.batchId===b.id)&&<p className="muted">尚未发往项目现场。</p>}</section></div><p className="note">混合批次展示来源及投入重量。混合后无法将某一枚牡蛎壳精确对应到某家餐厅。</p></>}</>}
- async function upload(file:File,targetId:string){setBusy(true);try{const f=new FormData();f.append('file',file);f.append('targetId',targetId);const res=await fetch('/api/files',{method:'POST',body:f}),j:any=await res.json();if(!res.ok)throw new Error(j.error);await reload();toast.success('附件已保存')}catch(e:any){toast.error(e.message)}finally{setBusy(false)}}
- const newAllowed=({pickup:can('restaurant','dispatcher'),trip:can('dispatcher'),receipt:can('operator'),batch:can('operator'),project:u.role==='admin',partner:can('dispatcher')} as any)[page];
- return <SidebarProvider><Sidebar className="app-sidebar"><SidebarHeader><div className="brand"><Waves size={30}/>ShellCycle</div><p className="sidebar-caption">蓝湾 · 牡蛎壳循环管理</p></SidebarHeader><SidebarContent><div className="nav-caption">业务工作台</div><SidebarMenu>{pageNav.map(([id,label,Icon])=><SidebarMenuItem key={id}><SidebarMenuButton isActive={page===id} onClick={()=>go(id)}><Icon/><span>{label}</span>{id==='pickup'&&rs('pickup').some(x=>x.status==='requested')&&<span className="nav-count">{rs('pickup').filter(x=>x.status==='requested').length}</span>}</SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu></SidebarContent><SidebarFooter><div className="sidebar-user"><span className="avatar">{u.name[0]}</span><div><strong>{u.name}</strong><small>{roles[u.role]}</small></div><button title="退出登录" onClick={onLogout}><LogOut size={18}/></button></div></SidebarFooter></Sidebar><main className="app-main"><header className="topbar"><div><SidebarTrigger/><span>蓝湾生态</span><ChevronRight size={14}/><strong>{nav.find(n=>n[0]===page)?.[1]}</strong></div><div><span className="environment">演示组织 · 模拟数据</span><Button variant="ghost" size="icon" title="刷新数据" disabled={busy} onClick={()=>reload().then(()=>toast.success('已刷新')).catch(e=>toast.error(e.message))}><RefreshCw size={17}/></Button></div></header><div className="page-content">{page!=='overview'&&<div className="page-heading"><div><p className="eyebrow">SHELLCYCLE / {page.toUpperCase()}</p><h2>{nav.find(n=>n[0]===page)?.[1]}</h2><p className="muted">{descriptions[page]}</p></div><div className="heading-actions">{page==='pickup'&&can('restaurant','dispatcher')&&<ImportPickups records={s} user={u} onComplete={reload}/>} {newAllowed&&<Button onClick={()=>create(page)}><Plus size={17}/>新建{nav.find(n=>n[0]===page)?.[1].replace('与质检','').replace('称重','')}</Button>}</div></div>}
- {page==='overview'?<Overview/>:page==='trace'?<Trace/>:page==='project'?<><Projects/><div className="section-actions">{can('project')&&<Button onClick={()=>create('demand')}><Plus size={16}/>提交物料需求</Button>}</div><Grid kind="demand" title="项目物料需求"/></>:page==='inventory'?<><Stats/><div className="section-actions">{can('dispatcher')&&<Button onClick={()=>create('reservation')}>分配库存</Button>}{can('operator')&&<Button variant="outline" onClick={()=>create('adjustment')}>申请库存调整</Button>}</div><Grid kind="reservation" title="物料预留"/><Grid kind="adjustment" title="库存调整审批"/><Grid kind="ledger" title="不可覆盖的库存流水"/></>:page==='dispatch'?<><Grid kind="dispatch" title="发运 / 签收"/><Grid kind="deployment" title="现场投放记录"/></>:page==='report'?<><Stats/><section className="panel report"><h3>数据口径与导出</h3><p>接收量 = 毛重 − 皮重 − 拒收量；可分配库存 = 已放行批次实物库存 − 有效预留。累计投放量按现场记录计算。</p><div className="export-grid">{['pickup','receipt','batch','dispatch','deployment','ledger'].map(k=><Button variant="outline" key={k} onClick={()=>csv(k)}><Download size={17}/>{({pickup:'回收申请',receipt:'入库台账',batch:'熟化批次',dispatch:'项目发运',deployment:'投放台账',ledger:'库存流水'} as any)[k]}</Button>)}</div><p className="note">CSV 中重量字段以克存储，除以 1,000 即为 kg。字段 delta 为带符号库存变动量。</p></section><Projects/></>:page==='settings'?<><section className="panel settings-rule"><div className="panel-heading"><h3>熟化规则</h3><a className="backup-link" href="/api/backup"><Download size={16}/>下载业务数据备份</a></div><p>新批次封批时使用 {rs('rule')[0]?.days} 天，版本 {rs('rule')[0]?.version}。已封批批次保留当时规则。</p><Button variant="outline" onClick={()=>open('rule.update','修改后续批次熟化规则',[field('days','熟化天数','number'),reason()],{days:rs('rule')[0]?.days})}>修改规则</Button></section><div className="section-actions"><Button onClick={()=>open('site.create','添加场地',[field('name','场地名称'),field('address','地址'),field('zones','区域（英文逗号分隔）'),field('capacity','容量（kg）','number')],{zones:'A1,A2,B1,B2'})}>添加场地</Button><Button variant="outline" onClick={()=>open('vehicle.create','添加车辆',[field('name','车牌 / 车辆名称'),field('capacity','载重（kg）','number')])}>添加车辆</Button><Button variant="outline" onClick={()=>open('user.create','添加业务账号',[field('username','登录账号'),field('name','姓名'),field('role','业务角色','select',Object.entries(roles).filter(([k])=>k!=='admin').map(([value,label])=>({value,label}))),field('scope','授权对象编号（餐厅 / 场地 / 项目；其他填 all）'),field('password','初始密码（至少 12 位）','password')],{scope:'all'})}>添加账号</Button></div><Grid kind="site" title="熟化场地"/><Grid kind="vehicle" title="回收车辆"/><section className="panel table-panel"><div className="panel-heading"><h3>业务账号</h3></div><Table><TableHeader><TableRow>{['账号','姓名','角色','授权范围','状态','操作'].map(x=><TableHead key={x}>{x}</TableHead>)}</TableRow></TableHeader><TableBody>{data.users.map((x:any)=><TableRow key={x.id}><TableCell>{x.username}</TableCell><TableCell>{x.name}</TableCell><TableCell>{roles[x.role]}</TableCell><TableCell>{name(x.scope)}</TableCell><TableCell>{x.active?'已启用':'已停用'}</TableCell><TableCell>{x.role!=='admin'&&<Button variant="ghost" onClick={()=>open('user.toggle',x.active?'停用账号':'启用账号',[],{id:x.id})}>{x.active?'停用':'启用'}</Button>}</TableCell></TableRow>)}</TableBody></Table></section></>:<><div className="toolbar"><div className="search"><Search size={17}/><Input aria-label="搜索记录" placeholder="搜索编号、餐厅或项目…" value={query} onChange={e=>{setQuery(e.target.value);setPg(1)}}/></div><Pick value={filter} onChange={v=>{setFilter(v);setPg(1)}} options={[{value:'all',label:'全部状态'},...Array.from(new Set(rs(page).flatMap(r=>[r.status,r.quality]).filter(Boolean))).map(v=>({value:v,label:labels[v]||v}))]}/><Pick value={sort} onChange={setSort} options={[{value:'new',label:'最近创建'},{value:'id',label:'按编号排序'}]}/><Button variant="outline" onClick={()=>csv(page)}><Download size={16}/>导出</Button></div><Grid kind={page}/></>}
- <footer className="app-footer"><span>ShellCycle · 蓝湾生态协同平台</span><span>教学演示数据 · 每笔操作均保存至服务器</span></footer></div></main>
- <Dialog open={!!modal} onOpenChange={v=>{if(!v&&!busy)setModal(null)}}><DialogContent className="business-dialog"><DialogHeader><DialogTitle>{modal?.title}</DialogTitle><DialogDescription>{modal?.fields.length?'请填写业务信息。提交后系统会检查权限、状态与数量。':'确认执行此业务操作？操作结果会记录在日志中。'}</DialogDescription></DialogHeader><form onSubmit={e=>{e.preventDefault();submit()}}><div className="form-fields">{modal?.fields.map(f=><label key={f.key}>{f.label}{f.optional?'（选填）':''}{f.type==='select'?<Pick value={form[f.key]} onChange={v=>setForm({...form,[f.key]:v})} options={f.options||[]}/>:f.type==='multi'?<div className="multi-list">{f.options?.map(o=><div key={o.value}><Checkbox checked={form[f.key]?.includes(o.value)} onCheckedChange={v=>setForm({...form,[f.key]:v?[...form[f.key],o.value]:form[f.key].filter((x:string)=>x!==o.value)})}/><span>{o.label}</span></div>)}</div>:f.type==='textarea'?<textarea required={!f.optional} maxLength={1000} value={form[f.key]} onChange={e=>setForm({...form,[f.key]:e.target.value})}/>:<Input required={!f.optional} type={f.type||'text'} min={f.type==='number'?0:undefined} step={f.type==='number'?'0.001':undefined} value={form[f.key]} onChange={e=>setForm({...form,[f.key]:e.target.value})}/>}</label>)}</div>{error&&<p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><Button type="button" variant="outline" disabled={busy} onClick={()=>setModal(null)}>取消</Button><Button type="submit" disabled={busy}>{busy?'正在保存…':'确认保存'}</Button></div></form></DialogContent></Dialog>
- <Sheet open={!!detail} onOpenChange={v=>!v&&setDetail(null)}><SheetContent className="detail-sheet"><SheetHeader><SheetTitle>{detail?.name||detail?.id}</SheetTitle><SheetDescription>业务记录与关联附件</SheetDescription></SheetHeader>{detail&&<div className="detail-body"><dl>{Object.entries(s.find(x=>x.id===detail.id)||detail).filter(([k])=>!['kind','id'].includes(k)).map(([k,v])=><div key={k}><dt>{fieldNames[k]||k}</dt><dd>{typeof v==='object'?JSON.stringify(v):(actionNames[String(v)]||labels[String(v)]||(typeof v==='boolean'?(v?'是':'否'):String(v??'—')))}</dd></div>)}</dl>{detail.kind==='trip'&&<div className="detail-related"><h3>按停靠顺序</h3>{(detail.pickupIds||[]).map((id:string,i:number)=><button key={id} onClick={()=>{const p=s.find(x=>x.id===id);if(p)setDetail(p)}}>{i+1}. {name(s.find(x=>x.id===id)?.partnerId)} · {id}</button>)}</div>}<h3>附件与现场凭证</h3><div className="attachments">{rs('attachment').filter(a=>a.targetId===detail.id).map(a=><a href={'/api/files?id='+a.id} key={a.id}><FileText size={16}/>{a.name}</a>)}<label className="upload"><Upload size={17}/>{busy?'上传中…':'上传照片或 PDF（最多 5 MB）'}<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" disabled={busy} onChange={e=>e.target.files?.[0]&&upload(e.target.files[0],detail.id)}/></label></div><div className="detail-actions">{rowActions(detail).map(a=><Button key={a.label} variant="outline" onClick={()=>{setDetail(null);a.run()}}>{a.label}</Button>)}</div></div>}</SheetContent></Sheet><Toaster richColors position="top-right"/></SidebarProvider>
+import { useState, useEffect, useMemo } from "react";
+import {
+  Waves,
+  LayoutDashboard,
+  Truck,
+  PackageCheck,
+  Layers3,
+  Warehouse,
+  Shell,
+  Route,
+  Search,
+  Plus,
+  RefreshCw,
+  LogOut,
+  ArrowUpRight,
+  Download,
+  Users,
+  SlidersHorizontal,
+  History,
+  Link2,
+  FileText,
+  MapPin,
+  Calendar,
+  ChevronRight,
+  Upload,
+  Menu,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  SidebarProvider,
+  Sidebar,
+  SidebarHeader,
+  SidebarContent,
+  SidebarFooter,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import { Toaster, toast } from "sonner";
+import { fieldNames, actionNames } from "@/lib/presentation";
+import BusinessGrid from "./business-grid";
+import RecordDetails from "./record-details";
+import OperationsReport from "./operations-report";
+import InventorySummary from "./inventory-summary";
+import ImportPickups from "./import-pickups";
+import { Row, User, rows, qty, stock, roles, labels } from "@/lib/domain";
+type Field = {
+  key: string;
+  label: string;
+  type?: string;
+  options?: { value: string; label: string }[];
+  value?: any;
+  optional?: boolean;
+};
+type Modal = {
+  action: string;
+  title: string;
+  fields: Field[];
+  data: any;
+  key: string;
+};
+const nav = [
+  ["overview", "工作总览", LayoutDashboard],
+  ["pickup", "回收申请", Truck],
+  ["trip", "调度线路", Route],
+  ["receipt", "称重入库", PackageCheck],
+  ["batch", "熟化与质检", Layers3],
+  ["inventory", "库存与分配", Warehouse],
+  ["project", "修复项目", Shell],
+  ["dispatch", "发运与投放", ArrowUpRight],
+  ["trace", "全链路溯源", Link2],
+  ["partner", "合作餐厅", Users],
+  ["report", "运营报表", FileText],
+  ["audit", "操作日志", History],
+  ["settings", "基础设置", SlidersHorizontal],
+] as const;
+const descriptions: Record<string, string> = {
+  overview: "每一次回收，都有迹可循。",
+  pickup: "从餐厅提交到上门收取，跟进每一笔回收。",
+  trip: "按车辆、司机与日期安排回收线路。",
+  receipt: "记录真实称重，分拣拒收物，保留重量差异。",
+  batch: "封批开始计时，检验合格后人工放行。",
+  inventory: "查看可用库存，分配项目需求，跟踪每笔出入库。",
+  project: "从物料需求到现场投放，连接牡蛎礁修复。",
+  dispatch: "分批发运、差异签收与现场投放记录。",
+  trace: "选择批次，追溯来源餐厅和物料去向。",
+  partner: "管理参与回收的餐厅及联系方式。",
+  report: "所有指标均由已保存的业务记录计算。",
+  audit: "关键业务操作的时间、操作者和变更记录。",
+  settings: "管理场地、车辆、账号及熟化规则。",
+};
+const rolePages: Record<string, string[]> = {
+  restaurant: ["overview", "pickup", "partner"],
+  driver: ["overview", "trip", "pickup"],
+  operator: [
+    "overview",
+    "pickup",
+    "receipt",
+    "batch",
+    "inventory",
+    "dispatch",
+    "trace",
+  ],
+  qa: ["overview", "batch", "inventory", "trace", "audit"],
+  project: ["overview", "project", "dispatch", "report"],
+  dispatcher: [
+    "overview",
+    "pickup",
+    "trip",
+    "receipt",
+    "batch",
+    "inventory",
+    "project",
+    "dispatch",
+    "trace",
+    "partner",
+    "report",
+    "audit",
+  ],
+};
+function Pick({
+  value,
+  onChange,
+  options,
+  placeholder = "请选择",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  placeholder?: string;
+}) {
+  return (
+    <Select value={value || ""} onValueChange={onChange}>
+      <SelectTrigger className="w-full">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((o) => (
+          <SelectItem value={o.value} key={o.value}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+function Badge({ value }: { value: string }) {
+  return (
+    <span className={"status status-" + value}>
+      {labels[value] ||
+        (
+          {
+            unreleased: "待放行",
+            loss: "损耗",
+            scrap: "报废",
+            return: "退回",
+            all: "全部",
+          } as any
+        )[value] ||
+        value}
+    </span>
+  );
+}
+export default function Workspace({
+  initial,
+  onLogout,
+}: {
+  initial: any;
+  onLogout: () => void;
+}) {
+  const [data, setData] = useState(initial),
+    [page, setPage] = useState("overview"),
+    [query, setQuery] = useState(""),
+    [filter, setFilter] = useState("all"),
+    [pg, setPg] = useState(1),
+    [sort, setSort] = useState("new"),
+    [modal, setModal] = useState<Modal | null>(null),
+    [form, setForm] = useState<any>({}),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [detail, setDetail] = useState<Row | null>(null),
+    [traceId, setTraceId] = useState(""),
+    [importText, setImportText] = useState(""),
+    [importPreview, setImportPreview] = useState<any[] | null>(null);
+  const s: Row[] = data.records,
+    u: User = data.user;
+  const index = useMemo(
+    () => new Map<string, Row>(s.map((r) => [r.id, r])),
+    [s],
+  );
+  const userIndex = useMemo(
+    () => new Map<string, any>(data.users.map((r: any) => [r.id, r])),
+    [data.users],
+  );
+  const grouped = useMemo(() => {
+    const m = new Map<string, Row[]>();
+    for (const r of s) m.set(r.kind, [...(m.get(r.kind) || []), r]);
+    return m;
+  }, [s]);
+  const rs = (kind: string) => grouped.get(kind) || [];
+  const name = (id: string) =>
+    index.get(id)?.name || userIndex.get(id)?.name || id || "—";
+  const can = (...rr: string[]) => u.role === "admin" || rr.includes(u.role);
+  const today = new Date().toISOString().slice(0, 10);
+  const list = (kind: string, fn?: (r: Row) => boolean) =>
+    rs(kind)
+      .filter(fn || (() => true))
+      .map((r) => ({
+        value: r.id,
+        label: `${r.name || r.id}${r.partnerId ? " · " + name(r.partnerId) : ""}`,
+      }));
+  const go = (p: string) => {
+    setPage(p);
+    setQuery("");
+    setFilter("all");
+    setPg(1);
+    history.replaceState(null, "", "#" + p);
+  };
+  async function reload() {
+    const r = await fetch("/api/data");
+    const d: any = await r.json();
+    if (!r.ok) {
+      if (r.status === 401) onLogout();
+      throw new Error(d.error);
+    }
+    setData(d);
+    return d;
+  }
+  useEffect(() => {
+    const p = location.hash.slice(1);
+    const batch = new URLSearchParams(location.search).get("batch");
+    if (batch) {
+      setTraceId(batch);
+      setPage("trace");
+    }
+    if (
+      nav.some((x) => x[0] === p) &&
+      (u.role === "admin" || rolePages[u.role]?.includes(p))
+    )
+      setPage(p);
+  }, []);
+  useEffect(() => {
+    const mc = (document as any).modelContext;
+    if (!mc?.registerTool) return;
+    const ctrl = new AbortController();
+    Promise.resolve(
+      mc.registerTool(
+        {
+          name: "navigate_shellcycle",
+          description: "切换至指定业务页面，不创建或修改记录",
+          inputSchema: {
+            type: "object",
+            properties: {
+              page: { type: "string", enum: nav.map((n) => n[0]) },
+            },
+            required: ["page"],
+            additionalProperties: false,
+          },
+          annotations: { readOnlyHint: true },
+          execute: async (x: any) => {
+            if (
+              !nav.some((n) => n[0] === x.page) ||
+              !(u.role === "admin" || rolePages[u.role]?.includes(x.page))
+            )
+              throw new Error("无权访问该页面");
+            go(x.page);
+            return { page: x.page };
+          },
+        },
+        { signal: ctrl.signal },
+      ),
+    ).catch(() => {});
+    return () => ctrl.abort();
+  }, [u.role]);
+  const field = (
+    key: string,
+    label: string,
+    type = "text",
+    options?: any[],
+    optional = false,
+  ): Field => ({ key, label, type, options, optional });
+  const weight = () => field("weight", "重量（kg）", "number");
+  const reason = () => field("reason", "原因 / 依据", "textarea");
+  function open(
+    action: string,
+    title: string,
+    fields: Field[] = [],
+    base: any = {},
+  ) {
+    const values = { ...base };
+    fields.forEach((f) => {
+      values[f.key] ??= f.value ?? (f.type === "multi" ? [] : "");
+    });
+    setModal({ action, title, fields, data: base, key: crypto.randomUUID() });
+    setForm(values);
+    setError("");
+  }
+  async function submit() {
+    if (!modal) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/action", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": modal.key,
+        },
+        body: JSON.stringify({ action: modal.action, data: form }),
+      });
+      const d: any = await res.json();
+      if (!res.ok) throw new Error(d.error);
+      await reload();
+      setModal(null);
+      toast.success("已保存，业务数据已更新");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function create(kind: string) {
+    switch (kind) {
+      case "pickup":
+        open(
+          "pickup.create",
+          "新建回收申请",
+          [
+            ...(u.role === "restaurant"
+              ? []
+              : [
+                  field(
+                    "partnerId",
+                    "合作餐厅",
+                    "select",
+                    list("partner", (r) => r.active),
+                  ),
+                ]),
+            field("expected", "预计净重（kg）", "number"),
+            field("buckets", "回收桶数", "number"),
+            field("scheduled", "期望回收日期", "date"),
+            field("notes", "装货说明", "textarea", undefined, true),
+          ],
+          { scheduled: today, buckets: 4 },
+        );
+        break;
+      case "trip":
+        open(
+          "trip.create",
+          "安排回收线路",
+          [
+            field("name", "线路名称"),
+            field("scheduled", "回收日期", "date"),
+            field("vehicleId", "车辆", "select", list("vehicle")),
+            field(
+              "driverId",
+              "司机",
+              "select",
+              data.users
+                .filter((x: any) => x.role === "driver" && x.active)
+                .map((x: any) => ({ value: x.id, label: x.name })),
+            ),
+            field(
+              "pickupIds",
+              "待调度申请（按选择顺序停靠）",
+              "multi",
+              list("pickup", (r) => r.status === "requested"),
+            ),
+          ],
+          { scheduled: today },
+        );
+        break;
+      case "receipt":
+        open(
+          "receipt.create",
+          "称重入库",
+          [
+            field(
+              "pickupId",
+              "已收取申请",
+              "select",
+              list("pickup", (r) => r.status === "collected"),
+            ),
+            field(
+              "siteId",
+              "接收场地",
+              "select",
+              list("site", (r) => u.role !== "operator" || r.id === u.scope),
+            ),
+            field("gross", "毛重（kg）", "number"),
+            field("tare", "皮重（kg）", "number"),
+            field("reject", "拒收重量（kg）", "number"),
+            field("reason", "拒收原因 / 说明", "textarea", undefined, true),
+          ],
+          { tare: 0, reject: 0, siteId: u.role === "operator" ? u.scope : "" },
+        );
+        break;
+      case "batch":
+        open(
+          "batch.create",
+          "建立熟化批次",
+          [
+            field("name", "批次名称"),
+            field(
+              "siteId",
+              "场地",
+              "select",
+              list("site", (r) => u.role !== "operator" || r.id === u.scope),
+            ),
+            field(
+              "zone",
+              "堆放区",
+              "select",
+              Array.from(new Set(rs("site").flatMap((x) => x.zones))).map(
+                (x) => ({ value: x, label: x }),
+              ),
+            ),
+          ],
+          { siteId: u.role === "operator" ? u.scope : "" },
+        );
+        break;
+      case "project":
+        open("project.create", "新建修复项目", [
+          field("name", "项目名称"),
+          field("location", "修复地点"),
+          field("target", "目标用壳量（kg）", "number"),
+          field("manager", "负责人"),
+        ]);
+        break;
+      case "partner":
+        open("partner.create", "添加合作餐厅", [
+          field("name", "餐厅名称"),
+          field("contact", "联系人"),
+          field("phone", "电话"),
+          field("address", "地址"),
+        ]);
+        break;
+      case "demand":
+        open(
+          "demand.create",
+          "提交物料需求",
+          [
+            ...(u.role === "project"
+              ? []
+              : [
+                  field(
+                    "projectId",
+                    "修复项目",
+                    "select",
+                    list("project", (r) => r.status === "open"),
+                  ),
+                ]),
+            weight(),
+            field("due", "需求日期", "date"),
+            field("notes", "用途说明", "textarea", undefined, true),
+          ],
+          { due: today },
+        );
+        break;
+      case "reservation":
+        open("reservation.create", "分配可用库存", [
+          field(
+            "demandId",
+            "物料需求",
+            "select",
+            list("demand", (r) => r.status === "open"),
+          ),
+          field(
+            "batchId",
+            "放行批次",
+            "select",
+            list("batch", (r) => stock(s, r.id).available > 0),
+          ),
+          weight(),
+        ]);
+        break;
+      case "adjustment":
+        open("adjustment.create", "申请库存调整", [
+          field("batchId", "批次", "select", list("batch")),
+          field("type", "调整类型", "select", [
+            { value: "loss", label: "盘点损耗（减库存）" },
+            { value: "scrap", label: "报废（减库存）" },
+            { value: "return", label: "退回入库（加库存）" },
+          ]),
+          weight(),
+          field(
+            "dispatchId",
+            "退料来源发运单（仅退料必填）",
+            "select",
+            list("dispatch", (r) => r.status === "received"),
+            true,
+          ),
+          reason(),
+        ]);
+        break;
+    }
+  }
+  function rowActions(r: Row) {
+    const a: { label: string; run: () => void }[] = [];
+    const act = (
+      label: string,
+      action: string,
+      fields: Field[] = [],
+      extra: any = {},
+    ) =>
+      a.push({
+        label,
+        run: () => open(action, label, fields, { id: r.id, ...extra }),
+      });
+    if (r.kind === "pickup") {
+      if (
+        can("restaurant", "dispatcher") &&
+        ["requested", "assigned"].includes(r.status)
+      )
+        act("取消", "pickup.cancel", [reason()]);
+      if (can("driver") && r.status === "assigned")
+        act("确认收取", "pickup.collect", [
+          weight(),
+          field("notes", "现场说明", "textarea", undefined, true),
+        ]);
+      if (can("operator") && r.status === "collected")
+        a.push({
+          label: "入库",
+          run: () => {
+            create("receipt");
+            setForm((f: any) => ({ ...f, pickupId: r.id }));
+          },
+        });
+    }
+    if (r.kind === "trip" && r.status === "assigned" && can("dispatcher")) {
+      act("取消线路", "trip.cancel", [reason()]);
+      act("改派", "trip.reassign", [
+        field(
+          "driverId",
+          "新司机",
+          "select",
+          data.users
+            .filter((x: any) => x.role === "driver" && x.active)
+            .map((x: any) => ({ value: x.id, label: x.name })),
+        ),
+        field(
+          "vehicleId",
+          "新车辆",
+          "select",
+          list("vehicle", (x) => x.active),
+        ),
+        reason(),
+      ]);
+    }
+    if (r.kind === "receipt" && can("operator"))
+      act(
+        "称重更正",
+        "receipt.correct",
+        [
+          field("gross", "更正毛重 kg", "number"),
+          field("tare", "更正皮重 kg", "number"),
+          field("reject", "更正拒收 kg", "number"),
+          reason(),
+        ],
+        { gross: r.gross / 1000, tare: r.tare / 1000, reject: r.reject / 1000 },
+      );
+    if (r.kind === "pickup" && r.status === "assigned" && can("driver"))
+      act("收取失败", "pickup.fail", [reason()]);
+    if (
+      r.kind === "pickup" &&
+      ["requested", "failed"].includes(r.status) &&
+      can("dispatcher")
+    )
+      act(
+        "重新安排",
+        "pickup.reschedule",
+        [field("scheduled", "回收日期", "date"), reason()],
+        { scheduled: today },
+      );
+    if (
+      r.kind === "demand" &&
+      r.status === "open" &&
+      can("project", "dispatcher")
+    ) {
+      act("关闭需求", "demand.close", [reason()]);
+      act("取消需求", "demand.cancel", [reason()]);
+    }
+    if (r.kind === "adjustment" && r.status === "pending") {
+      if (can("qa")) act("驳回", "adjustment.reject", [reason()]);
+      if (can() || r.requester === u.id)
+        act("撤回", "adjustment.withdraw", [reason()]);
+    }
+    if (r.kind === "partner" && can("dispatcher"))
+      act(
+        "编辑资料",
+        "partner.update",
+        [
+          field("name", "餐厅名称"),
+          field("contact", "联系人"),
+          field("phone", "电话"),
+          field("address", "地址"),
+        ],
+        {
+          name: r.name,
+          contact: r.contact,
+          phone: r.phone,
+          address: r.address,
+        },
+      );
+    if (r.kind === "batch") {
+      if (can("operator") && r.status === "assembling") {
+        act("添加投料", "batch.input", [
+          field(
+            "receiptId",
+            "入库单",
+            "select",
+            list(
+              "receipt",
+              (x) =>
+                x.siteId === r.siteId &&
+                x.accepted >
+                  rs("input")
+                    .filter((y) => y.receiptId === x.id)
+                    .reduce((a, y) => a + y.qty, 0),
+            ),
+          ),
+          weight(),
+        ]);
+        act("封批", "batch.seal");
+      }
+      if (can("qa") && r.status === "curing") {
+        act("检验", "batch.inspect", [
+          field("result", "检验结果", "select", [
+            { value: "pass", label: "合格" },
+            { value: "fail", label: "不合格，自动隔离" },
+          ]),
+          field("notes", "抽检情况及结论", "textarea"),
+        ]);
+        if (r.quality !== "released") act("放行", "batch.release");
+        if (r.quality !== "quarantined")
+          act("隔离", "batch.quarantine", [reason()]);
+      }
+      a.push({
+        label: "溯源",
+        run: () => {
+          go("trace");
+          setTraceId(r.id);
+        },
+      });
+    }
+    if (r.kind === "reservation" && r.status === "active") {
+      if (can("dispatcher", "operator"))
+        act(
+          "发运",
+          "dispatch.create",
+          [weight(), field("vehicle", "运输车辆")],
+          { reservationId: r.id },
+        );
+      if (can("dispatcher")) act("取消预留", "reservation.cancel", [reason()]);
+    }
+    if (r.kind === "dispatch") {
+      if (can("project") && r.status === "shipped")
+        act(
+          "签收",
+          "dispatch.receive",
+          [weight(), field("reason", "差异说明", "textarea", undefined, true)],
+          { weight: r.qty / 1000 },
+        );
+      if (can("project") && r.status === "received")
+        act(
+          "记录投放",
+          "deployment.create",
+          [
+            weight(),
+            field("date", "投放日期", "date"),
+            field("location", "投放点 / 坐标"),
+            field("notes", "现场记录", "textarea", undefined, true),
+          ],
+          { dispatchId: r.id, date: today },
+        );
+    }
+    if (r.kind === "project" && can("project") && r.status === "open") {
+      a.push({
+        label: "物料需求",
+        run: () => {
+          create("demand");
+          setForm((f: any) => ({ ...f, projectId: r.id }));
+        },
+      });
+      act("结项", "project.close", [
+        field("reason", "结项总结与目标差额说明", "textarea"),
+      ]);
+    }
+    if (r.kind === "adjustment" && r.status === "pending" && can("qa"))
+      act("复核批准", "adjustment.approve");
+    if (r.kind === "partner" && can("dispatcher"))
+      act(r.active ? "停用" : "启用", "partner.toggle");
+    if (
+      r.kind === "demand" &&
+      r.status === "open" &&
+      can("project", "dispatcher")
+    )
+      act("取消需求", "demand.cancel");
+    return a;
+  }
+  const columns: Record<string, [string, (r: Row) => any][]> = {
+    pickup: [
+      ["回收编号", (r) => r.id],
+      ["餐厅", (r) => name(r.partnerId)],
+      ["回收日期", (r) => r.scheduled],
+      [
+        "预计 / 收取 kg",
+        (r) =>
+          `${qty(r.expected)} / ${r.collectedWeight ? qty(r.collectedWeight) : "—"}`,
+      ],
+      ["状态", (r) => <Badge value={r.status} />],
+    ],
+    trip: [
+      ["线路", (r) => r.name],
+      ["司机 / 车辆", (r) => `${name(r.driverId)} / ${name(r.vehicleId)}`],
+      ["日期", (r) => r.scheduled],
+      [
+        "收取进度",
+        (r) => {
+          const p = rs("pickup").filter((p) => p.tripId === r.id);
+          return `${p.filter((x) => ["collected", "received", "rejected"].includes(x.status)).length} / ${p.filter((x) => x.status !== "cancelled").length} 站`;
+        },
+      ],
+    ],
+    receipt: [
+      ["入库单号", (r) => r.id],
+      ["来源餐厅", (r) => name(r.partnerId)],
+      ["接收场地", (r) => name(r.siteId)],
+      ["毛重 / 皮重 kg", (r) => `${qty(r.gross)} / ${qty(r.tare)}`],
+      ["接收 / 拒收 kg", (r) => `${qty(r.accepted)} / ${qty(r.reject)}`],
+    ],
+    batch: [
+      [
+        "批次",
+        (r) => (
+          <>
+            <strong>{r.name}</strong>
+            <small>{r.id}</small>
+          </>
+        ),
+      ],
+      ["场地 / 区域", (r) => `${name(r.siteId)} · ${r.zone}`],
+      ["熟化到期", (r) => r.due || "尚未封批"],
+      ["实物库存 kg", (r) => qty(stock(s, r.id).onhand)],
+      [
+        "状态",
+        (r) => (
+          <Badge value={r.quality === "unreleased" ? r.status : r.quality} />
+        ),
+      ],
+    ],
+    demand: [
+      ["需求单", (r) => r.id],
+      ["项目", (r) => name(r.projectId)],
+      ["需求 kg", (r) => qty(r.qty)],
+      ["需用日期", (r) => r.due],
+      ["状态", (r) => <Badge value={r.status} />],
+    ],
+    reservation: [
+      ["预留单", (r) => r.id],
+      [
+        "项目 / 批次",
+        (r) => (
+          <>
+            {name(r.projectId)}
+            <small>{r.batchId}</small>
+          </>
+        ),
+      ],
+      ["预留 / 已发运 kg", (r) => `${qty(r.qty)} / ${qty(r.shipped)}`],
+      ["状态", (r) => <Badge value={r.status} />],
+    ],
+    dispatch: [
+      ["发运单", (r) => r.id],
+      ["修复项目", (r) => name(r.projectId)],
+      ["批次", (r) => r.batchId],
+      [
+        "发运 / 签收 kg",
+        (r) => `${qty(r.qty)} / ${r.received == null ? "—" : qty(r.received)}`,
+      ],
+      ["状态", (r) => <Badge value={r.status} />],
+    ],
+    deployment: [
+      ["投放记录", (r) => r.id],
+      ["项目", (r) => name(r.projectId)],
+      ["投放点", (r) => r.location],
+      ["日期", (r) => r.date],
+      ["投放 kg", (r) => qty(r.qty)],
+    ],
+    partner: [
+      ["合作餐厅", (r) => r.name],
+      ["联系人", (r) => r.contact],
+      ["电话", (r) => r.phone],
+      ["地址", (r) => r.address],
+      ["状态", (r) => (r.active ? "合作中" : "已停用")],
+    ],
+    ledger: [
+      ["流水编号", (r) => r.id],
+      ["批次", (r) => r.batchId],
+      [
+        "变动 kg",
+        (r) => (
+          <span className={r.delta > 0 ? "positive" : "negative"}>
+            {r.delta > 0 ? "+" : ""}
+            {qty(r.delta)}
+          </span>
+        ),
+      ],
+      ["原因", (r) => r.reason],
+      ["关联记录", (r) => r.ref],
+    ],
+    adjustment: [
+      ["调整单", (r) => r.id],
+      ["批次", (r) => r.batchId],
+      ["类型", (r) => <Badge value={r.type} />],
+      ["重量 kg", (r) => qty(r.qty)],
+      ["状态", (r) => <Badge value={r.status} />],
+    ],
+    audit: [
+      ["时间", (r) => r.created?.replace("T", " ").slice(0, 19)],
+      ["操作人", (r) => r.actorName],
+      ["操作", (r) => actionNames[r.action] || r.action],
+      ["业务记录", (r) => r.target],
+    ],
+    site: [
+      ["场地", (r) => r.name],
+      ["地址", (r) => r.address],
+      ["区域", (r) => r.zones.join(" / ")],
+      ["容量 kg", (r) => qty(r.capacity)],
+    ],
+    vehicle: [
+      ["车辆", (r) => r.name],
+      ["载重 kg", (r) => qty(r.capacity)],
+    ],
+  };
+  function csv(kind: string) {
+    const data = rs(kind);
+    if (!data.length) {
+      toast.info("没有可导出的记录");
+      return;
+    }
+    const keys = [...new Set(data.flatMap(Object.keys))];
+    const cell = (v: any) =>
+      '"' +
+      String(v ?? "")
+        .replace(/^[=+@-]/, "'$&")
+        .replace(/"/g, '""') +
+      '"';
+    const content =
+      "\ufeff" +
+      [
+        keys.join(","),
+        ...data.map((r) =>
+          keys
+            .map((k) =>
+              cell(typeof r[k] === "object" ? JSON.stringify(r[k]) : r[k]),
+            )
+            .join(","),
+        ),
+      ].join("\r\n");
+    const url = URL.createObjectURL(
+        new Blob([content], { type: "text/csv;charset=utf-8" }),
+      ),
+      a = document.createElement("a");
+    a.href = url;
+    a.download = `ShellCycle-${kind}-${today}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  function grid(props: { kind: string; title?: string; compact?: boolean }) {
+    return (
+      <BusinessGrid
+        {...props}
+        key={props.kind}
+        records={s}
+        query={query}
+        filter={filter}
+        sort={sort}
+        name={name}
+        columns={columns}
+        onDetail={setDetail}
+        rowActions={rowActions}
+        csv={csv}
+      />
+    );
+  }
+  const totals = {
+    received: rs("receipt").reduce((a, r) => a + r.accepted, 0),
+    deployed: rs("deployment").reduce((a, r) => a + r.qty, 0),
+    available: rs("batch").reduce((a, r) => a + stock(s, r.id).available, 0),
+    curing: rs("batch")
+      .filter((r) => r.quality === "unreleased")
+      .reduce((a, r) => a + stock(s, r.id).onhand, 0),
+  };
+  const alerts = [
+    ...rs("batch")
+      .filter((r) => r.quality === "quarantined")
+      .map((r) => ({
+        title: `${r.name} 已隔离`,
+        sub: "未发运预留已冻结，请安排复检",
+        page: u.role === "project" ? "dispatch" : "batch",
+      })),
+    ...rs("batch")
+      .filter((r) => r.quality === "unreleased" && r.due <= today)
+      .map((r) => ({
+        title: `${r.name} 熟化到期`,
+        sub: "检验合格后可人工放行",
+        page: "batch",
+      })),
+    ...rs("pickup")
+      .filter(
+        (r) =>
+          ["requested", "assigned"].includes(r.status) && r.scheduled < today,
+      )
+      .slice(0, 3)
+      .map((r) => ({
+        title: `${name(r.partnerId)} 回收待处理`,
+        sub: `原定 ${r.scheduled}`,
+        page: "pickup",
+      })),
+    ...rs("dispatch")
+      .filter((r) => r.status === "shipped")
+      .slice(0, 3)
+      .map((r) => ({
+        title: `${r.id} 等待签收`,
+        sub: name(r.projectId),
+        page: "dispatch",
+      })),
+  ];
+  const pageNav = nav.filter(
+    (n) => u.role === "admin" || rolePages[u.role]?.includes(n[0]),
+  );
+  function renderStats() {
+    return (
+      <div className="stats">
+        {(u.role === "driver"
+          ? [
+              [
+                "待收取任务",
+                String(
+                  rs("pickup").filter((x) => x.status === "assigned").length,
+                ),
+                "单",
+                "仅显示分配给你的任务",
+              ],
+              [
+                "我的回收线路",
+                String(
+                  rs("trip").filter((x) => x.status !== "completed").length,
+                ),
+                "条",
+                "按线路和日期安排停靠",
+              ],
+              [
+                "已收取任务",
+                String(
+                  rs("pickup").filter((x) =>
+                    ["collected", "received", "rejected"].includes(x.status),
+                  ).length,
+                ),
+                "单",
+                "已确认现场收取",
+              ],
+              [
+                "累计收取净重",
+                qty(
+                  rs("pickup").reduce(
+                    (a, x) => a + (x.collectedWeight || 0),
+                    0,
+                  ),
+                ),
+                "kg",
+                "按你的现场收取记录计算",
+              ],
+            ]
+          : u.role === "restaurant"
+            ? [
+                [
+                  "我的回收申请",
+                  String(rs("pickup").length),
+                  "单",
+                  "当前餐厅的全部申请",
+                ],
+                [
+                  "待上门收取",
+                  String(
+                    rs("pickup").filter((x) =>
+                      ["requested", "assigned"].includes(x.status),
+                    ).length,
+                  ),
+                  "单",
+                  "已提交或已安排车辆",
+                ],
+                [
+                  "累计现场收取",
+                  qty(
+                    rs("pickup").reduce(
+                      (a, x) => a + (x.collectedWeight || 0),
+                      0,
+                    ),
+                  ),
+                  "kg",
+                  "以司机现场记录为准",
+                ],
+                [
+                  "累计有效回收",
+                  qty(totals.received),
+                  "kg",
+                  "扣除皮重与拒收杂物",
+                ],
+              ]
+            : u.role === "project"
+              ? [
+                  [
+                    "物料需求",
+                    qty(
+                      rs("demand")
+                        .filter((x) => x.status !== "cancelled")
+                        .reduce((a, x) => a + x.qty, 0),
+                    ),
+                    "kg",
+                    "当前项目的有效需求",
+                  ],
+                  [
+                    "已安排发运",
+                    qty(rs("dispatch").reduce((a, x) => a + x.qty, 0)),
+                    "kg",
+                    "累计发运到本项目",
+                  ],
+                  [
+                    "已完成签收",
+                    qty(
+                      rs("dispatch").reduce((a, x) => a + (x.received || 0), 0),
+                    ),
+                    "kg",
+                    "按现场签收净重计算",
+                  ],
+                  [
+                    "已完成现场投放",
+                    qty(totals.deployed),
+                    "kg",
+                    "以现场投放记录为准",
+                  ],
+                ]
+              : [
+                  [
+                    "累计接收入库",
+                    qty(totals.received),
+                    "kg",
+                    "接收净重，已扣除拒收",
+                  ],
+                  [
+                    "可分配库存",
+                    qty(totals.available),
+                    "kg",
+                    "已放行 · 扣除有效预留",
+                  ],
+                  ["正在熟化", qty(totals.curing), "kg", "等待到期与质量检验"],
+                  [
+                    "已完成现场投放",
+                    qty(totals.deployed),
+                    "kg",
+                    "以现场投放记录为准",
+                  ],
+                ]
+        ).map((m, i) => (
+          <section className={"stat stat-" + i} key={m[0]}>
+            <p>
+              {m[0]}
+              <span>0{i + 1}</span>
+            </p>
+            <strong>
+              {m[1]} <small>{m[2]}</small>
+            </strong>
+            <small>{m[3]}</small>
+          </section>
+        ))}
+      </div>
+    );
+  }
+  function renderOverview() {
+    return (
+      <>
+        <div className="welcome">
+          <div>
+            <p className="eyebrow">BLUEBAY OPERATIONS</p>
+            <h2>{u.name}，欢迎回来</h2>
+            <p>让每一份牡蛎壳，找到回到海洋的路径。</p>
+          </div>
+          <div className="welcome-date">
+            <Calendar size={20} />
+            {today}
+            <small>蓝湾生态 / 教学演示组织</small>
+          </div>
+        </div>
+        {renderStats()}
+        <div className="overview-grid">
+          <section className="panel">
+            <div className="panel-heading">
+              <h3>
+                {["driver", "restaurant"].includes(u.role)
+                  ? "回收进展"
+                  : u.role === "project"
+                    ? "项目物料进展"
+                    : "循环进展"}
+              </h3>
+              <span className="muted">当前授权范围</span>
+            </div>
+            <div className="flow-bars">
+              {(["driver", "restaurant"].includes(u.role)
+                ? [
+                    [
+                      "预计回收",
+                      rs("pickup")
+                        .filter((x) => x.status !== "cancelled")
+                        .reduce((a, r) => a + r.expected, 0),
+                    ],
+                    [
+                      "已收取",
+                      rs("pickup").reduce(
+                        (a, r) => a + (r.collectedWeight || 0),
+                        0,
+                      ),
+                    ],
+                    ...(u.role === "driver"
+                      ? []
+                      : [["已接收入库", totals.received]]),
+                  ]
+                : u.role === "project"
+                  ? [
+                      [
+                        "物料需求",
+                        rs("demand")
+                          .filter((x) => x.status !== "cancelled")
+                          .reduce((a, r) => a + r.qty, 0),
+                      ],
+                      ["已发运", rs("dispatch").reduce((a, r) => a + r.qty, 0)],
+                      ["已现场投放", totals.deployed],
+                    ]
+                  : [
+                      ["已接收入库", totals.received],
+                      [
+                        "已分配发运",
+                        rs("dispatch").reduce((a, r) => a + r.qty, 0),
+                      ],
+                      ["完成现场投放", totals.deployed],
+                    ]
+              ).map(([label, v], i) => (
+                <div key={String(label)}>
+                  <div>
+                    <span>
+                      <b>0{i + 1}</b> {label}
+                    </span>
+                    <strong>{qty(Number(v))}</strong>
+                  </div>
+                  <Progress
+                    value={Math.min(
+                      100,
+                      (Number(v) /
+                        Math.max(
+                          1,
+                          totals.received,
+                          rs("pickup").reduce((a, r) => a + r.expected, 0),
+                          rs("demand").reduce((a, r) => a + r.qty, 0),
+                        )) *
+                        100,
+                    )}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="chart-note">
+              不同环节的累计量用于跟踪物料进展，不作为碳减排或生态效果估算。
+            </p>
+          </section>
+          <section className="panel">
+            <div className="panel-heading">
+              <h3>
+                待办提醒 <span className="count">{alerts.length}</span>
+              </h3>
+            </div>
+            <div className="alerts">
+              {alerts.slice(0, 4).map((a, i) => (
+                <button key={i} onClick={() => go(a.page)}>
+                  <span className="alert-number">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span>
+                    <strong>{a.title}</strong>
+                    <small>{a.sub}</small>
+                  </span>
+                  <ChevronRight size={17} />
+                </button>
+              ))}
+              {!alerts.length && <p className="muted">当前没有待处理提醒。</p>}
+            </div>
+          </section>
+        </div>
+        {can("restaurant", "driver", "dispatcher")
+          ? grid({ kind: "pickup", title: "近期回收申请", compact: true })
+          : grid({
+              kind: u.role === "project" ? "dispatch" : "batch",
+              title: u.role === "project" ? "项目物料" : "熟化批次",
+              compact: true,
+            })}
+      </>
+    );
+  }
+  function renderProjects() {
+    return (
+      <div className="project-grid">
+        {rs("project").map((p) => {
+          const used = rs("deployment")
+            .filter((d) => d.projectId === p.id)
+            .reduce((a, d) => a + d.qty, 0);
+          return (
+            <section className="panel project-card" key={p.id}>
+              <div className="project-top">
+                <span className="project-icon">
+                  <Shell size={25} />
+                </span>
+                <Badge value={p.status} />
+              </div>
+              <h3>{p.name}</h3>
+              <p>
+                <MapPin size={15} />
+                {p.location}
+              </p>
+              <div className="project-progress">
+                <strong>
+                  {qty(used)} <small>/ {qty(p.target)} kg</small>
+                </strong>
+                <span>{Math.round((used / p.target) * 100)}%</span>
+              </div>
+              <Progress value={Math.min(100, (used / p.target) * 100)} />
+              <p className="muted">
+                负责人 {p.manager} · {p.id}
+              </p>
+              <div className="project-buttons">
+                <Button variant="outline" onClick={() => setDetail(p)}>
+                  查看项目
+                </Button>
+                {rowActions(p).map((a) => (
+                  <Button key={a.label} variant="ghost" onClick={a.run}>
+                    {a.label}
+                  </Button>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    );
+  }
+  function renderTrace() {
+    const b = s.find((x) => x.id === traceId && x.kind === "batch");
+    const ins = b ? rs("input").filter((x) => x.batchId === b.id) : [];
+    return (
+      <>
+        <section className="panel trace-search">
+          <div>
+            <h3>追踪一批牡蛎壳的旅程</h3>
+            <p className="muted">从餐厅来源，到熟化检验，再到项目现场。</p>
+          </div>
+          <Pick
+            value={traceId}
+            onChange={setTraceId}
+            options={list("batch")}
+            placeholder="选择需要追溯的批次"
+          />
+        </section>
+        {b && (
+          <>
+            <div className="trace-summary">
+              <strong>{b.name}</strong>
+              <a
+                href={"/?batch=" + encodeURIComponent(b.id) + "#trace"}
+                title="可收藏或分享的批次溯源链接"
+              >
+                {b.id} ↗
+              </a>
+              <Badge value={b.quality} />
+              <span>
+                封批 {b.sealedAt || "—"} · 到期 {b.due || "—"}
+              </span>
+            </div>
+            <div className="trace-columns">
+              <section className="panel">
+                <h3>01 · 回收来源</h3>
+                {ins.map((i) => {
+                  const rec = s.find((x) => x.id === i.receiptId);
+                  return (
+                    <button
+                      className="trace-item"
+                      key={i.id}
+                      onClick={() => rec && setDetail(rec)}
+                    >
+                      <strong>{rec ? name(rec.partnerId) : "来源记录"}</strong>
+                      <small>{i.receiptId}</small>
+                      <span>{qty(i.qty)} kg</span>
+                    </button>
+                  );
+                })}
+              </section>
+              <section className="panel">
+                <h3>02 · 熟化与检验</h3>
+                <div className="trace-item">
+                  <strong>
+                    {name(b.siteId)} / {b.zone}
+                  </strong>
+                  <small>
+                    规则版本 {b.ruleVersion || "—"} · {b.days || "—"} 天
+                  </small>
+                </div>
+                {rs("inspection")
+                  .filter((i) => i.batchId === b.id)
+                  .map((i) => (
+                    <div className="trace-item" key={i.id}>
+                      <Badge value={i.result} />
+                      <p>{i.notes}</p>
+                      <small>
+                        {name(i.actor)} · {i.created.slice(0, 10)}
+                      </small>
+                    </div>
+                  ))}
+                {b.reason && <p className="warning">{b.reason}</p>}
+              </section>
+              <section className="panel">
+                <h3>03 · 项目去向</h3>
+                {rs("dispatch")
+                  .filter((d) => d.batchId === b.id)
+                  .map((d) => (
+                    <button
+                      className="trace-item"
+                      key={d.id}
+                      onClick={() => setDetail(d)}
+                    >
+                      <strong>{name(d.projectId)}</strong>
+                      <small>
+                        {d.id} · {labels[d.status]}
+                      </small>
+                      <span>发运 {qty(d.qty)} kg</span>
+                      <small>
+                        已投放{" "}
+                        {qty(
+                          rs("deployment")
+                            .filter((x) => x.dispatchId === d.id)
+                            .reduce((a, x) => a + x.qty, 0),
+                        )}{" "}
+                        kg
+                      </small>
+                    </button>
+                  ))}
+                {!rs("dispatch").some((d) => d.batchId === b.id) && (
+                  <p className="muted">尚未发往项目现场。</p>
+                )}
+              </section>
+            </div>
+            <p className="note">
+              混合批次展示来源及投入重量。混合后无法将某一枚牡蛎壳精确对应到某家餐厅。
+            </p>
+          </>
+        )}
+      </>
+    );
+  }
+  async function upload(file: File, targetId: string) {
+    setBusy(true);
+    try {
+      const f = new FormData();
+      f.append("file", file);
+      f.append("targetId", targetId);
+      const res = await fetch("/api/files", { method: "POST", body: f }),
+        j: any = await res.json();
+      if (!res.ok) throw new Error(j.error);
+      await reload();
+      toast.success("附件已保存");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const newAllowed = (
+    {
+      pickup: can("restaurant", "dispatcher"),
+      trip: can("dispatcher"),
+      receipt: can("operator"),
+      batch: can("operator"),
+      project: u.role === "admin",
+      partner: can("dispatcher"),
+    } as any
+  )[page];
+  return (
+    <SidebarProvider>
+      <Sidebar className="app-sidebar">
+        <SidebarHeader>
+          <div className="brand">
+            <Waves size={30} />
+            ShellCycle
+          </div>
+          <p className="sidebar-caption">蓝湾 · 牡蛎壳循环管理</p>
+        </SidebarHeader>
+        <SidebarContent>
+          <div className="nav-caption">业务工作台</div>
+          <SidebarMenu>
+            {pageNav.map(([id, label, Icon]) => (
+              <SidebarMenuItem key={id}>
+                <SidebarMenuButton
+                  isActive={page === id}
+                  onClick={() => go(id)}
+                >
+                  <Icon />
+                  <span>{label}</span>
+                  {id === "pickup" &&
+                    rs("pickup").some((x) => x.status === "requested") && (
+                      <span className="nav-count">
+                        {
+                          rs("pickup").filter((x) => x.status === "requested")
+                            .length
+                        }
+                      </span>
+                    )}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        </SidebarContent>
+        <SidebarFooter>
+          <div className="sidebar-user">
+            <span className="avatar">{u.name[0]}</span>
+            <div>
+              <strong>{u.name}</strong>
+              <small>{roles[u.role]}</small>
+            </div>
+            <button title="退出登录" onClick={onLogout}>
+              <LogOut size={18} />
+            </button>
+          </div>
+        </SidebarFooter>
+      </Sidebar>
+      <main className="app-main">
+        <header className="topbar">
+          <div>
+            <SidebarTrigger />
+            <span>蓝湾生态</span>
+            <ChevronRight size={14} />
+            <strong>{nav.find((n) => n[0] === page)?.[1]}</strong>
+          </div>
+          <div>
+            <span className="environment">演示组织 · 模拟数据</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              title="刷新数据"
+              disabled={busy}
+              onClick={() =>
+                reload()
+                  .then(() => toast.success("已刷新"))
+                  .catch((e) => toast.error(e.message))
+              }
+            >
+              <RefreshCw size={17} />
+            </Button>
+          </div>
+        </header>
+        <div className="page-content">
+          {page !== "overview" && (
+            <div className="page-heading">
+              <div>
+                <p className="eyebrow">SHELLCYCLE / {page.toUpperCase()}</p>
+                <h2>{nav.find((n) => n[0] === page)?.[1]}</h2>
+                <p className="muted">{descriptions[page]}</p>
+              </div>
+              <div className="heading-actions">
+                {page === "pickup" && can("restaurant", "dispatcher") && (
+                  <ImportPickups records={s} user={u} onComplete={reload} />
+                )}{" "}
+                {newAllowed && (
+                  <Button onClick={() => create(page)}>
+                    <Plus size={17} />
+                    新建
+                    {nav
+                      .find((n) => n[0] === page)?.[1]
+                      .replace("与质检", "")
+                      .replace("称重", "")}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+          {page === "overview" ? (
+            renderOverview()
+          ) : page === "trace" ? (
+            renderTrace()
+          ) : page === "project" ? (
+            <>
+              {renderProjects()}
+              <div className="section-actions">
+                {can("project") && (
+                  <Button onClick={() => create("demand")}>
+                    <Plus size={16} />
+                    提交物料需求
+                  </Button>
+                )}
+              </div>
+              {grid({ kind: "demand", title: "项目物料需求" })}
+            </>
+          ) : page === "inventory" ? (
+            <>
+              <InventorySummary records={s} onDetail={setDetail} />
+              <div className="section-actions">
+                {can("dispatcher") && (
+                  <Button onClick={() => create("reservation")}>
+                    分配库存
+                  </Button>
+                )}
+                {can("operator") && (
+                  <Button
+                    variant="outline"
+                    onClick={() => create("adjustment")}
+                  >
+                    申请库存调整
+                  </Button>
+                )}
+              </div>
+              {grid({ kind: "reservation", title: "物料预留" })}
+              {grid({ kind: "adjustment", title: "库存调整审批" })}
+              {grid({ kind: "ledger", title: "不可覆盖的库存流水" })}
+            </>
+          ) : page === "dispatch" ? (
+            <>
+              {grid({ kind: "dispatch", title: "发运 / 签收" })}
+              {grid({ kind: "deployment", title: "现场投放记录" })}
+            </>
+          ) : page === "report" ? (
+            <>
+              <OperationsReport records={s} />
+              <section className="panel report">
+                <h3>数据口径与导出</h3>
+                <p>
+                  接收量 = 毛重 − 皮重 − 拒收量；可分配库存 = 已放行批次实物库存
+                  − 有效预留。累计投放量按现场记录计算。
+                </p>
+                <div className="export-grid">
+                  {[
+                    "pickup",
+                    "receipt",
+                    "batch",
+                    "dispatch",
+                    "deployment",
+                    "ledger",
+                  ].map((k) => (
+                    <Button variant="outline" key={k} onClick={() => csv(k)}>
+                      <Download size={17} />
+                      {
+                        (
+                          {
+                            pickup: "回收申请",
+                            receipt: "入库台账",
+                            batch: "熟化批次",
+                            dispatch: "项目发运",
+                            deployment: "投放台账",
+                            ledger: "库存流水",
+                          } as any
+                        )[k]
+                      }
+                    </Button>
+                  ))}
+                </div>
+                <p className="note">
+                  CSV 中重量字段以克存储，除以 1,000 即为 kg。字段 delta
+                  为带符号库存变动量。
+                </p>
+              </section>
+              {renderProjects()}
+            </>
+          ) : page === "settings" ? (
+            <>
+              <section className="panel settings-rule">
+                <div className="panel-heading">
+                  <h3>熟化规则</h3>
+                  <a className="backup-link" href="/api/backup">
+                    <Download size={16} />
+                    下载业务数据备份
+                  </a>
+                </div>
+                <p>
+                  新批次封批时使用 {rs("rule")[0]?.days} 天，版本{" "}
+                  {rs("rule")[0]?.version}。已封批批次保留当时规则。
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    open(
+                      "rule.update",
+                      "修改后续批次熟化规则",
+                      [field("days", "熟化天数", "number"), reason()],
+                      { days: rs("rule")[0]?.days },
+                    )
+                  }
+                >
+                  修改规则
+                </Button>
+              </section>
+              <div className="section-actions">
+                <Button
+                  onClick={() =>
+                    open(
+                      "site.create",
+                      "添加场地",
+                      [
+                        field("name", "场地名称"),
+                        field("address", "地址"),
+                        field("zones", "区域（英文逗号分隔）"),
+                        field("capacity", "容量（kg）", "number"),
+                      ],
+                      { zones: "A1,A2,B1,B2" },
+                    )
+                  }
+                >
+                  添加场地
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    open("vehicle.create", "添加车辆", [
+                      field("name", "车牌 / 车辆名称"),
+                      field("capacity", "载重（kg）", "number"),
+                    ])
+                  }
+                >
+                  添加车辆
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    open(
+                      "user.create",
+                      "添加业务账号",
+                      [
+                        field("username", "登录账号"),
+                        field("name", "姓名"),
+                        field(
+                          "role",
+                          "业务角色",
+                          "select",
+                          Object.entries(roles)
+                            .filter(([k]) => k !== "admin")
+                            .map(([value, label]) => ({ value, label })),
+                        ),
+                        field(
+                          "scope",
+                          "授权对象编号（餐厅 / 场地 / 项目；其他填 all）",
+                        ),
+                        field("password", "初始密码（至少 12 位）", "password"),
+                      ],
+                      { scope: "all" },
+                    )
+                  }
+                >
+                  添加账号
+                </Button>
+              </div>
+              {grid({ kind: "site", title: "熟化场地" })}
+              {grid({ kind: "vehicle", title: "回收车辆" })}
+              <section className="panel table-panel">
+                <div className="panel-heading">
+                  <h3>业务账号</h3>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      {["账号", "姓名", "角色", "授权范围", "状态", "操作"].map(
+                        (x) => (
+                          <TableHead key={x}>{x}</TableHead>
+                        ),
+                      )}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.users.map((x: any) => (
+                      <TableRow key={x.id}>
+                        <TableCell>{x.username}</TableCell>
+                        <TableCell>{x.name}</TableCell>
+                        <TableCell>{roles[x.role]}</TableCell>
+                        <TableCell>{name(x.scope)}</TableCell>
+                        <TableCell>{x.active ? "已启用" : "已停用"}</TableCell>
+                        <TableCell>
+                          {x.role !== "admin" && (
+                            <Button
+                              variant="ghost"
+                              onClick={() =>
+                                open(
+                                  "user.toggle",
+                                  x.active ? "停用账号" : "启用账号",
+                                  [],
+                                  { id: x.id },
+                                )
+                              }
+                            >
+                              {x.active ? "停用" : "启用"}
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </section>
+            </>
+          ) : (
+            <>
+              <div className="toolbar">
+                <div className="search">
+                  <Search size={17} />
+                  <Input
+                    aria-label="搜索记录"
+                    placeholder="搜索编号、餐厅或项目…"
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setPg(1);
+                    }}
+                  />
+                </div>
+                <Pick
+                  value={filter}
+                  onChange={(v) => {
+                    setFilter(v);
+                    setPg(1);
+                  }}
+                  options={[
+                    { value: "all", label: "全部状态" },
+                    ...Array.from(
+                      new Set(
+                        rs(page)
+                          .flatMap((r) => [r.status, r.quality])
+                          .filter(Boolean),
+                      ),
+                    ).map((v) => ({ value: v, label: labels[v] || v })),
+                  ]}
+                />
+                <Pick
+                  value={sort}
+                  onChange={setSort}
+                  options={[
+                    { value: "new", label: "最近创建" },
+                    { value: "id", label: "按编号排序" },
+                  ]}
+                />
+                <Button variant="outline" onClick={() => csv(page)}>
+                  <Download size={16} />
+                  导出
+                </Button>
+              </div>
+              {grid({ kind: page })}
+            </>
+          )}
+          <footer className="app-footer">
+            <span>ShellCycle · 蓝湾生态协同平台</span>
+            <span>教学演示数据 · 每笔操作均保存至服务器</span>
+          </footer>
+        </div>
+      </main>
+      <Dialog
+        open={!!modal}
+        onOpenChange={(v) => {
+          if (!v && !busy) setModal(null);
+        }}
+      >
+        <DialogContent className="business-dialog">
+          <DialogHeader>
+            <DialogTitle>{modal?.title}</DialogTitle>
+            <DialogDescription>
+              {modal?.fields.length
+                ? "请填写业务信息。提交后系统会检查权限、状态与数量。"
+                : "确认执行此业务操作？操作结果会记录在日志中。"}
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit();
+            }}
+          >
+            <div className="form-fields">
+              {modal?.fields.map((f) => (
+                <label key={f.key}>
+                  {f.label}
+                  {f.optional ? "（选填）" : ""}
+                  {f.type === "select" ? (
+                    <Pick
+                      value={form[f.key]}
+                      onChange={(v) => setForm({ ...form, [f.key]: v })}
+                      options={f.options || []}
+                    />
+                  ) : f.type === "multi" ? (
+                    <div className="multi-list">
+                      {f.options?.map((o) => (
+                        <div key={o.value}>
+                          <Checkbox
+                            checked={form[f.key]?.includes(o.value)}
+                            onCheckedChange={(v) =>
+                              setForm({
+                                ...form,
+                                [f.key]: v
+                                  ? [...form[f.key], o.value]
+                                  : form[f.key].filter(
+                                      (x: string) => x !== o.value,
+                                    ),
+                              })
+                            }
+                          />
+                          <span>{o.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : f.type === "textarea" ? (
+                    <textarea
+                      required={!f.optional}
+                      maxLength={1000}
+                      value={form[f.key]}
+                      onChange={(e) =>
+                        setForm({ ...form, [f.key]: e.target.value })
+                      }
+                    />
+                  ) : (
+                    <Input
+                      required={!f.optional}
+                      type={f.type || "text"}
+                      min={f.type === "number" ? 0 : undefined}
+                      step={f.type === "number" ? "0.001" : undefined}
+                      value={form[f.key]}
+                      onChange={(e) =>
+                        setForm({ ...form, [f.key]: e.target.value })
+                      }
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => setModal(null)}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? "正在保存…" : "确认保存"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Sheet open={!!detail} onOpenChange={(v) => !v && setDetail(null)}>
+        <SheetContent className="detail-sheet">
+          <SheetHeader>
+            <SheetTitle>{detail?.name || detail?.id}</SheetTitle>
+            <SheetDescription>业务记录与关联附件</SheetDescription>
+          </SheetHeader>
+          {detail && (
+            <div className="detail-body">
+              <RecordDetails
+                record={s.find((x) => x.id === detail.id) || detail}
+                records={s}
+                users={data.users}
+                onSelect={setDetail}
+              />
+              <h3>附件与现场凭证</h3>
+              <div className="attachments">
+                {rs("attachment")
+                  .filter((a) => a.targetId === detail.id)
+                  .map((a) => (
+                    <a href={"/api/files?id=" + a.id} key={a.id}>
+                      <FileText size={16} />
+                      {a.name}
+                    </a>
+                  ))}
+                <label className="upload">
+                  <Upload size={17} />
+                  {busy ? "上传中…" : "上传照片或 PDF（最多 5 MB）"}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                    disabled={busy}
+                    onChange={(e) =>
+                      e.target.files?.[0] &&
+                      upload(e.target.files[0], detail.id)
+                    }
+                  />
+                </label>
+              </div>
+              <div className="detail-actions">
+                {rowActions(detail).map((a) => (
+                  <Button
+                    key={a.label}
+                    variant="outline"
+                    onClick={() => {
+                      setDetail(null);
+                      a.run();
+                    }}
+                  >
+                    {a.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+      <Toaster richColors position="top-right" />
+    </SidebarProvider>
+  );
 }
